@@ -1,0 +1,5 @@
+# ColdWatch does not use WiFi/Bluetooth networking, so disable them to avoid
+# needing the large esp_wifi/bt prebuilt binary blob submodules at link time.
+CONFIG_ESP_WIFI_ENABLED=n
+CONFIG_BT_ENABLED=n
+
