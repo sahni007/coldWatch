@@ -152,52 +152,41 @@ static void handle_ack_button(void) {
 
 // ---------------- Main application task ----------------
 static void coldwatch_task(void *arg) {
-    int64_t last_sample_ms = 0;
     int64_t last_lcd_refresh_ms = 0;
     int64_t last_humidity_sample_ms = 0;
 
     while (1) {
         int64_t now = millis64();
 
-        // ---- Sample the sensor at fixed interval (SRS1_001) ----
-        if (now - last_sample_ms >= SENSOR_SAMPLE_INTERVAL_MS) {
-            last_sample_ms = now;
-
-            float raw_temp;
-            bool ok = temperature_sensor_sample(&raw_temp);
-            bool faulted = (temperature_sensor_get_fault_state() == SENSOR_STATE_FAULT);
-
-            if (ok) {
-                coldwatch_config_t *cfg = nvs_storage_get_config();
-                // SRS1_004/005: snap to configured resolution to stabilize readings
-                lastTemperature = temperature_round_to_resolution(raw_temp, cfg->temperatureResolution);
-                lastTempValid = true;
-            } else {
-                lastTempValid = false;
-            }
-
-            // SRS1_006/007/008/010/011: evaluate alarms
-            alarm_manager_update(lastTemperature, lastTempValid, faulted);
-        }
-
         // ---- Sample the humidity sensor at fixed interval (SRS2_001) ----
         if (now - last_humidity_sample_ms >= DHT11_SAMPLE_INTERVAL_MS) {
             last_humidity_sample_ms = now;
 
+            float raw_humidity_temperature;
             float raw_humidity;
-            bool hum_ok = humidity_sensor_sample(&raw_humidity);
+            bool hum_ok = humidity_sensor_sample(&raw_humidity_temperature, &raw_humidity);
             bool hum_faulted = (humidity_sensor_get_fault_state() == HUMIDITY_SENSOR_STATE_FAULT);
 
             if (hum_ok) {
                 coldwatch_config_t *cfg = nvs_storage_get_config();
-                // SRS2_004/005: snap to configured resolution to stabilize readings
+                // DHT11 provides both values, so use it as the connected
+                // temperature and humidity source.
+                lastTemperature = temperature_round_to_resolution(
+                    raw_humidity_temperature, cfg->temperatureResolution);
+                lastTempValid = true;
                 lastHumidity = humidity_round_to_resolution(raw_humidity, cfg->humidityResolution);
                 lastHumidityValid = true;
+                ESP_LOGI(TAG, "DHT11 temperature: %.1f C, humidity: %.1f %%RH",
+                         lastTemperature, lastHumidity);
             } else {
+                lastTempValid = false;
                 lastHumidityValid = false;
+                ESP_LOGW(TAG, "Humidity read failed (fault state: %s)",
+                         hum_faulted ? "FAULT" : "DEBOUNCING");
             }
 
-            // SRS2_006/007/008/010/011: evaluate humidity alarms
+            // Evaluate both alarms from the same DHT11 sample.
+            alarm_manager_update(lastTemperature, lastTempValid, false);
             alarm_manager_update_humidity(lastHumidity, lastHumidityValid, hum_faulted);
         }
 
@@ -207,7 +196,7 @@ static void coldwatch_task(void *arg) {
         if (now - last_lcd_refresh_ms >= LCD_REFRESH_INTERVAL_MS) {
             last_lcd_refresh_ms = now;
             // SRS1_009 / SRS2_009
-            alarm_manager_refresh_outputs(temperature_sensor_get_type_name(), lastTemperature, lastTempValid,
+            alarm_manager_refresh_outputs(humidity_sensor_get_type_name(), lastTemperature, lastTempValid,
                                            humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid);
         } else {
             buzzer_update(); // keep buzzer pattern responsive between LCD refreshes

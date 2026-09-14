@@ -6,11 +6,10 @@
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_adc/adc_oneshot.h"
 
 #if ACTIVE_SENSOR_TYPE == SENSOR_TYPE_DS18B20
   #include "onewire.h"
-#else
-  #include "driver/adc.h"
 #endif
 
 // DS18B20 ROM commands
@@ -21,13 +20,26 @@
 static sensor_fault_state_t s_fault_state = SENSOR_STATE_OK;
 static uint8_t s_bad_read_streak = 0;
 static uint8_t s_good_read_streak = 0;
+#if ACTIVE_SENSOR_TYPE != SENSOR_TYPE_DS18B20
+static adc_oneshot_unit_handle_t s_adc_handle;
+#endif
 
 void temperature_sensor_init(void) {
 #if ACTIVE_SENSOR_TYPE == SENSOR_TYPE_DS18B20
     onewire_init(ONE_WIRE_BUS_GPIO);
 #else
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(ANALOG_TEMP_ADC_CHAN, ADC_ATTEN_DB_11); // ~0-3.9V range
+    const adc_oneshot_unit_init_cfg_t unit_config = {
+        .unit_id = ADC_UNIT_1,
+        .ulp_mode = ADC_ULP_MODE_DISABLE,
+    };
+    const adc_oneshot_chan_cfg_t channel_config = {
+        .atten = ADC_ATTEN_DB_11,
+        .bitwidth = ADC_BITWIDTH_DEFAULT,
+    };
+    ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_config, &s_adc_handle));
+    ESP_ERROR_CHECK(adc_oneshot_config_channel(s_adc_handle,
+                                                ANALOG_TEMP_ADC_CHAN,
+                                                &channel_config));
 #endif
 }
 
@@ -95,7 +107,10 @@ static bool read_ds18b20(float *temp_c) {
 
 #if ACTIVE_SENSOR_TYPE == SENSOR_TYPE_ANALOG_LM35
 static bool read_analog_lm35(float *temp_c) {
-    int raw = adc1_get_raw(ANALOG_TEMP_ADC_CHAN);
+    int raw;
+    if (adc_oneshot_read(s_adc_handle, ANALOG_TEMP_ADC_CHAN, &raw) != ESP_OK) {
+        return false;
+    }
     // SRS1_010: open/short circuit detection via ADC rail-clamping
     if (raw <= ANALOG_OPEN_LOW_RAW || raw >= ANALOG_OPEN_HIGH_RAW) {
         return false;
@@ -108,7 +123,10 @@ static bool read_analog_lm35(float *temp_c) {
 
 #if ACTIVE_SENSOR_TYPE == SENSOR_TYPE_ANALOG_NTC
 static bool read_analog_ntc(float *temp_c) {
-    int raw = adc1_get_raw(ANALOG_TEMP_ADC_CHAN);
+    int raw;
+    if (adc_oneshot_read(s_adc_handle, ANALOG_TEMP_ADC_CHAN, &raw) != ESP_OK) {
+        return false;
+    }
     if (raw <= ANALOG_OPEN_LOW_RAW || raw >= ANALOG_OPEN_HIGH_RAW) {
         return false;
     }

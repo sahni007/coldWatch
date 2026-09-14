@@ -10,7 +10,8 @@ idf_component_register(
     buzzer
     lcd_i2c
     sms_module
-    driver
+    esp_driver_gpio
+    esp_driver_uart
     esp_timer
     log
     freertos

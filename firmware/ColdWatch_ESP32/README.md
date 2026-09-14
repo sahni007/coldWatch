@@ -121,7 +121,7 @@ native C drivers (`driver/gpio.h`, `driver/i2c.h`, `driver/uart.h`, `driver/ledc
 **Power note:** SIM800L draws up to ~2A current spikes during transmit — power it from a
 dedicated 4.0V regulated supply, not the ESP32 3.3V/5V pin.
 
-## Building (ESP-IDF v5.1+)
+## Building (ESP-IDF v6.1+)
 
 **IMPORTANT:** cloning this git repo only gives you the ColdWatch project
 code. **ESP-IDF itself (the SDK that provides headers like `driver/gpio.h`,
@@ -229,8 +229,8 @@ RESET                - restore factory defaults (temperature + humidity)
 
 ## Compile-Verified
 
-This project was configured and built successfully against **ESP-IDF v5.1.4**
-for the `esp32` target using `idf.py build`:
+This project is configured for **ESP-IDF v6.1** and the `esp32` target. Run
+`idf.py build` from this project directory to compile it:
 
 ```
 [891/891] Generated /home/.../build/ColdWatch_ESP32.bin

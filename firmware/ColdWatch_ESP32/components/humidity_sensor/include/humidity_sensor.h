@@ -22,9 +22,9 @@ typedef enum {
 
 void humidity_sensor_init(void);
 
-// Take one sample from the hardware. Returns true if 'out_humidity_pct' is
+// Take one sample from the hardware. Returns true if both output values are
 // valid (i.e. the sensor is not currently in a fault state).
-bool humidity_sensor_sample(float *out_humidity_pct);
+bool humidity_sensor_sample(float *out_temperature_c, float *out_humidity_pct);
 
 humidity_sensor_fault_state_t humidity_sensor_get_fault_state(void);
 const char *humidity_sensor_get_type_name(void); // SRS2_009

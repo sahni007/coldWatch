@@ -1,6 +1,6 @@
 idf_component_register(
   SRCS "lcd_i2c.c"
   INCLUDE_DIRS "include"
-  REQUIRES common driver freertos
+  REQUIRES common esp_driver_i2c freertos
 )
 

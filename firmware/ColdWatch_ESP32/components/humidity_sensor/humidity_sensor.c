@@ -31,11 +31,12 @@ humidity_sensor_fault_state_t humidity_sensor_get_fault_state(void) {
     return s_fault_state;
 }
 
-bool humidity_sensor_sample(float *out_humidity_pct) {
+bool humidity_sensor_sample(float *out_temperature_c, float *out_humidity_pct) {
 #if ENABLE_DHT11
-    float temp_c_unused, humidity;
-    bool ok = dht11_read(&temp_c_unused, &humidity); // SRS2_001
+    float temperature_c, humidity;
+    bool ok = dht11_read(&temperature_c, &humidity); // SRS2_001
 #else
+    float temperature_c = NAN;
     float humidity = NAN;
     bool ok = false;
 #endif
@@ -47,6 +48,7 @@ bool humidity_sensor_sample(float *out_humidity_pct) {
             s_good_read_streak >= HUMIDITY_RECOVER_CONSEC_READS) {
             s_fault_state = HUMIDITY_SENSOR_STATE_OK; // SRS2_011: clear fault once connection is fixed
         }
+        *out_temperature_c = temperature_c;
         *out_humidity_pct = humidity;
         return (s_fault_state == HUMIDITY_SENSOR_STATE_OK);
     } else {
@@ -55,6 +57,7 @@ bool humidity_sensor_sample(float *out_humidity_pct) {
         if (s_bad_read_streak >= HUMIDITY_FAULT_CONSEC_READS) {
             s_fault_state = HUMIDITY_SENSOR_STATE_FAULT; // SRS2_010
         }
+        *out_temperature_c = NAN;
         *out_humidity_pct = NAN;
         return false;
     }

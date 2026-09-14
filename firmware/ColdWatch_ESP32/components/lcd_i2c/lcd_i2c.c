@@ -7,7 +7,7 @@
 #include "config.h"
 #include <string.h>
 #include <stdio.h>
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -25,28 +25,31 @@
 #define LCD_CMD_FUNCTION_SET_4B 0x28
 #define LCD_CMD_SET_DDRAM_ADDR  0x80
 
+static i2c_master_bus_handle_t s_i2c_bus;
+static i2c_master_dev_handle_t s_lcd_device;
+
 static void i2c_master_init(void) {
-    i2c_config_t conf = {
-        .mode = I2C_MODE_MASTER,
+    const i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_MASTER_PORT,
         .sda_io_num = I2C_MASTER_SDA_GPIO,
         .scl_io_num = I2C_MASTER_SCL_GPIO,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = 1,
     };
-    i2c_param_config(I2C_MASTER_PORT, &conf);
-    i2c_driver_install(I2C_MASTER_PORT, conf.mode, 0, 0, 0);
+    const i2c_device_config_t device_config = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = LCD_I2C_ADDR,
+        .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+    };
+
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &s_i2c_bus));
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(s_i2c_bus, &device_config,
+                                               &s_lcd_device));
 }
 
 static esp_err_t i2c_write_byte_raw(uint8_t data) {
-    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
-    i2c_master_start(cmd);
-    i2c_master_write_byte(cmd, (LCD_I2C_ADDR << 1) | I2C_MASTER_WRITE, true);
-    i2c_master_write_byte(cmd, data, true);
-    i2c_master_stop(cmd);
-    esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_PORT, cmd, pdMS_TO_TICKS(50));
-    i2c_cmd_link_delete(cmd);
-    return ret;
+    return i2c_master_transmit(s_lcd_device, &data, 1, 50);
 }
 
 static void lcd_pulse_enable(uint8_t data) {

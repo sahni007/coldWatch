@@ -7,7 +7,7 @@
 #define COLDWATCH_CONFIG_H
 
 #include "driver/gpio.h"
-#include "driver/adc.h"
+#include "esp_adc/adc_oneshot.h"
 
 // ============================================================
 // SRS1_009: Sensor type support (multiple sensor types on LCD)
@@ -25,7 +25,7 @@
 // Pin assignments (ESP32 DevKitC style boards)
 // ============================================================
 #define ONE_WIRE_BUS_GPIO     GPIO_NUM_4     // DS18B20 data pin (needs 4.7k pull-up to 3.3V)
-#define ANALOG_TEMP_ADC_CHAN  ADC1_CHANNEL_6 // GPIO34 - analog sensor (LM35/NTC) - SRS1_001
+#define ANALOG_TEMP_ADC_CHAN  ADC_CHANNEL_6  // GPIO34 - analog sensor (LM35/NTC) - SRS1_001
 #define BUZZER_GPIO           GPIO_NUM_25    // Buzzer, driven via LEDC PWM
 #define ACK_BUTTON_GPIO       GPIO_NUM_27    // Push button (to GND, internal pull-up) - silence buzzer
 
