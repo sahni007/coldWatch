@@ -128,16 +128,28 @@ void lcd_init(void) {
     lcd_clear();
 }
 
-void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_valid) {
+void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_valid,
+                      const char *humidity_sensor_type_name, float humidity, bool humidity_valid) {
     char line0[LCD_COLUMNS + 1];
-    char line1[LCD_COLUMNS + 1];
+    char line1[32]; // generous scratch buffer; lcd_print_padded() truncates to LCD_COLUMNS for display
 
-    snprintf(line0, sizeof(line0), "Sensor:%s", sensor_type_name); // SRS1_009
+    // SRS1_009 / SRS2_009: show both the temperature and humidity sensor
+    // type names (e.g. "DS18B20/DHT11").
+    snprintf(line0, sizeof(line0), "%s/%s", sensor_type_name, humidity_sensor_type_name);
+
+    char temp_part[10];
+    char hum_part[10];
     if (temp_valid) {
-        snprintf(line1, sizeof(line1), "Temp: %.1fC", temperature);
+        snprintf(temp_part, sizeof(temp_part), "%.1fC", temperature);
     } else {
-        snprintf(line1, sizeof(line1), "Temp: ---.-C");
+        snprintf(temp_part, sizeof(temp_part), "--.-C");
     }
+    if (humidity_valid) {
+        snprintf(hum_part, sizeof(hum_part), "%.1f%%", humidity);
+    } else {
+        snprintf(hum_part, sizeof(hum_part), "--.-%%");
+    }
+    snprintf(line1, sizeof(line1), "T:%s H:%s", temp_part, hum_part);
 
     lcd_set_cursor(0, 0);
     lcd_print_padded(line0, LCD_COLUMNS);

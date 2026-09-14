@@ -5,6 +5,7 @@ idf_component_register(
     common
     nvs_storage
     temperature_sensor
+    humidity_sensor
     alarm_manager
     buzzer
     lcd_i2c

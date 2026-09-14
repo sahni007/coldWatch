@@ -16,14 +16,18 @@ typedef struct {
     float    temperatureLowLimit;    // SRS1_003
     float    temperatureResolution;  // SRS1_004
     uint16_t temperatureHysteresis;  // SRS1_008 (sample count)
+    float    humidityHighLimit;      // SRS2_002
+    float    humidityLowLimit;       // SRS2_003
+    float    humidityResolution;     // SRS2_004
+    uint16_t humidityHysteresis;     // SRS2_008 (sample count)
 } coldwatch_config_t;
 
 // ---- Log entry ----
 typedef struct {
     int64_t  timestampMs;       // esp_timer_get_time()/1000 at time of event
-    uint16_t alarmId;           // 1006 / 1007 / 1010
+    uint16_t alarmId;           // 1006 / 1007 / 1010 / 2006 / 2007 / 2010
     uint8_t  eventType;         // 0 = RAISED, 1 = CLEARED
-    int16_t  tempTimesHundred;  // temperature * 100 (or INT16_MIN if invalid)
+    int16_t  tempTimesHundred;  // temperature or humidity * 100 (or INT16_MIN if invalid)
 } coldwatch_log_entry_t;
 
 #define LOG_EVENT_RAISED   0
@@ -42,7 +46,13 @@ void nvs_storage_set_low_limit(float v);
 void nvs_storage_set_resolution(float v);
 void nvs_storage_set_hysteresis(uint16_t v);
 
-// Log file (SRS1_006/007/010 event recording)
+// Humidity config access (SRS2_002/003/004/008)
+void nvs_storage_set_humidity_high_limit(float v);
+void nvs_storage_set_humidity_low_limit(float v);
+void nvs_storage_set_humidity_resolution(float v);
+void nvs_storage_set_humidity_hysteresis(uint16_t v);
+
+// Log file (SRS1_006/007/010, SRS2_006/007/010 event recording)
 void nvs_storage_append_log(uint16_t alarmId, uint8_t eventType, float temperature);
 void nvs_storage_dump_log(void); // prints via printf/ESP_LOG
 

@@ -26,9 +26,12 @@ static void load_or_init_config(void) {
         ESP_LOGW(TAG, "Config not found / invalid (err=%s) -> loading defaults", esp_err_to_name(err));
         nvs_storage_reset_config_to_defaults();
     } else {
-        ESP_LOGI(TAG, "Config loaded from NVS: high=%.1f low=%.1f res=%.2f hyst=%u",
+        ESP_LOGI(TAG, "Config loaded from NVS: high=%.1f low=%.1f res=%.2f hyst=%u | "
+                 "humHigh=%.1f humLow=%.1f humRes=%.2f humHyst=%u",
                  s_config.temperatureHighLimit, s_config.temperatureLowLimit,
-                 s_config.temperatureResolution, s_config.temperatureHysteresis);
+                 s_config.temperatureResolution, s_config.temperatureHysteresis,
+                 s_config.humidityHighLimit, s_config.humidityLowLimit,
+                 s_config.humidityResolution, s_config.humidityHysteresis);
     }
 }
 
@@ -68,6 +71,10 @@ void nvs_storage_reset_config_to_defaults(void) {
     s_config.temperatureLowLimit   = DEFAULT_TEMP_LOW_LIMIT;     // SRS1_003
     s_config.temperatureResolution = DEFAULT_TEMP_RESOLUTION;    // SRS1_004
     s_config.temperatureHysteresis = DEFAULT_TEMP_HYSTERESIS_CNT;// SRS1_008
+    s_config.humidityHighLimit     = DEFAULT_HUMIDITY_HIGH_LIMIT;    // SRS2_002
+    s_config.humidityLowLimit      = DEFAULT_HUMIDITY_LOW_LIMIT;     // SRS2_003
+    s_config.humidityResolution    = DEFAULT_HUMIDITY_RESOLUTION;    // SRS2_004
+    s_config.humidityHysteresis    = DEFAULT_HUMIDITY_HYSTERESIS_CNT;// SRS2_008
     nvs_storage_save_config();
 }
 
@@ -75,6 +82,11 @@ void nvs_storage_set_high_limit(float v)     { s_config.temperatureHighLimit = v
 void nvs_storage_set_low_limit(float v)      { s_config.temperatureLowLimit = v; nvs_storage_save_config(); }
 void nvs_storage_set_resolution(float v)     { s_config.temperatureResolution = v; nvs_storage_save_config(); }
 void nvs_storage_set_hysteresis(uint16_t v)  { s_config.temperatureHysteresis = v; nvs_storage_save_config(); }
+
+void nvs_storage_set_humidity_high_limit(float v)    { s_config.humidityHighLimit = v; nvs_storage_save_config(); }
+void nvs_storage_set_humidity_low_limit(float v)     { s_config.humidityLowLimit = v; nvs_storage_save_config(); }
+void nvs_storage_set_humidity_resolution(float v)    { s_config.humidityResolution = v; nvs_storage_save_config(); }
+void nvs_storage_set_humidity_hysteresis(uint16_t v) { s_config.humidityHysteresis = v; nvs_storage_save_config(); }
 
 void nvs_storage_append_log(uint16_t alarmId, uint8_t eventType, float temperature) {
     coldwatch_log_entry_t entry;

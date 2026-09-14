@@ -15,6 +15,19 @@
  *  SRS1_009 - LCD shows active sensor type name
  *  SRS1_010 - Alarm 1010 (sensor fault): LCD + SMS + NVS log + buzzer
  *  SRS1_011 - Alarms 1007 & 1010 auto-clear when condition resolves
+ *
+ *  SRS2_001 - humidity_sensor reads via the DHT11's bit-banged single-wire
+ *             protocol (see components/dht11 + components/humidity_sensor)
+ *  SRS2_002 - config.humidityHighLimit (NVS, default 100.0)
+ *  SRS2_003 - config.humidityLowLimit  (NVS, default 0.0)
+ *  SRS2_004 - config.humidityResolution (NVS, default 0.1)
+ *  SRS2_005 - target +-3RH accuracy (see README for DHT11 accuracy caveat)
+ *  SRS2_006 - Alarm 2006 (high humidity): LCD + SMS + NVS log + buzzer
+ *  SRS2_007 - Alarm 2007 (low humidity):  LCD + SMS + NVS log + buzzer
+ *  SRS2_008 - config.humidityHysteresis (consecutive-sample debounce)
+ *  SRS2_009 - LCD shows active humidity sensor type name (DHT11)
+ *  SRS2_010 - Alarm 2010 (humidity sensor fault): LCD + SMS + NVS log + buzzer
+ *  SRS2_011 - Alarms 2006/2007/2010 auto-clear when condition resolves
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +43,7 @@
 #include "config.h"
 #include "nvs_storage.h"
 #include "temperature_sensor.h"
+#include "humidity_sensor.h"
 #include "alarm_manager.h"
 #include "buzzer.h"
 #include "lcd_i2c.h"
@@ -39,18 +53,24 @@ static const char *TAG = "ColdWatch";
 
 static float lastTemperature = NAN;
 static bool  lastTempValid = false;
+static float lastHumidity = NAN;
+static bool  lastHumidityValid = false;
 
 static inline int64_t millis64(void) {
     return esp_timer_get_time() / 1000;
 }
 
 // ---------------- Serial command console (Serial Monitor / stdin over UART0) ----------------
-// (SRS1_002/003/004/008 - runtime configuration)
+// (SRS1_002/003/004/008, SRS2_002/003/004/008 - runtime configuration)
 // Commands (newline terminated), e.g.:
 //   SET HIGH 55.0
 //   SET LOW -5.0
 //   SET RES 0.5
 //   SET HYST 20
+//   SET HUMHIGH 80.0
+//   SET HUMLOW 10.0
+//   SET HUMRES 0.5
+//   SET HUMHYST 20
 //   GET
 //   LOG
 //   RESET
@@ -69,10 +89,25 @@ static void process_console_command(const char *line) {
     } else if (strncmp(line, "SET HYST ", 9) == 0) {
         nvs_storage_set_hysteresis((uint16_t)atoi(line + 9));
         printf("OK: temperatureHysteresis updated\n");
+    } else if (strncmp(line, "SET HUMHIGH ", 12) == 0) {
+        nvs_storage_set_humidity_high_limit(atof(line + 12));
+        printf("OK: humidityHighLimit updated\n");
+    } else if (strncmp(line, "SET HUMLOW ", 11) == 0) {
+        nvs_storage_set_humidity_low_limit(atof(line + 11));
+        printf("OK: humidityLowLimit updated\n");
+    } else if (strncmp(line, "SET HUMRES ", 11) == 0) {
+        nvs_storage_set_humidity_resolution(atof(line + 11));
+        printf("OK: humidityResolution updated\n");
+    } else if (strncmp(line, "SET HUMHYST ", 12) == 0) {
+        nvs_storage_set_humidity_hysteresis((uint16_t)atoi(line + 12));
+        printf("OK: humidityHysteresis updated\n");
     } else if (strcmp(line, "GET") == 0) {
-        printf("High=%.2f Low=%.2f Res=%.2f Hyst=%u\n",
+        printf("High=%.2f Low=%.2f Res=%.2f Hyst=%u | "
+               "HumHigh=%.2f HumLow=%.2f HumRes=%.2f HumHyst=%u\n",
                cfg->temperatureHighLimit, cfg->temperatureLowLimit,
-               cfg->temperatureResolution, cfg->temperatureHysteresis);
+               cfg->temperatureResolution, cfg->temperatureHysteresis,
+               cfg->humidityHighLimit, cfg->humidityLowLimit,
+               cfg->humidityResolution, cfg->humidityHysteresis);
     } else if (strcmp(line, "LOG") == 0) {
         nvs_storage_dump_log();
     } else if (strcmp(line, "RESET") == 0) {
@@ -119,6 +154,7 @@ static void handle_ack_button(void) {
 static void coldwatch_task(void *arg) {
     int64_t last_sample_ms = 0;
     int64_t last_lcd_refresh_ms = 0;
+    int64_t last_humidity_sample_ms = 0;
 
     while (1) {
         int64_t now = millis64();
@@ -144,12 +180,35 @@ static void coldwatch_task(void *arg) {
             alarm_manager_update(lastTemperature, lastTempValid, faulted);
         }
 
+        // ---- Sample the humidity sensor at fixed interval (SRS2_001) ----
+        if (now - last_humidity_sample_ms >= DHT11_SAMPLE_INTERVAL_MS) {
+            last_humidity_sample_ms = now;
+
+            float raw_humidity;
+            bool hum_ok = humidity_sensor_sample(&raw_humidity);
+            bool hum_faulted = (humidity_sensor_get_fault_state() == HUMIDITY_SENSOR_STATE_FAULT);
+
+            if (hum_ok) {
+                coldwatch_config_t *cfg = nvs_storage_get_config();
+                // SRS2_004/005: snap to configured resolution to stabilize readings
+                lastHumidity = humidity_round_to_resolution(raw_humidity, cfg->humidityResolution);
+                lastHumidityValid = true;
+            } else {
+                lastHumidityValid = false;
+            }
+
+            // SRS2_006/007/008/010/011: evaluate humidity alarms
+            alarm_manager_update_humidity(lastHumidity, lastHumidityValid, hum_faulted);
+        }
+
         handle_ack_button();
 
         // ---- Refresh LCD / buzzer pattern ----
         if (now - last_lcd_refresh_ms >= LCD_REFRESH_INTERVAL_MS) {
             last_lcd_refresh_ms = now;
-            alarm_manager_refresh_outputs(temperature_sensor_get_type_name(), lastTemperature, lastTempValid); // SRS1_009
+            // SRS1_009 / SRS2_009
+            alarm_manager_refresh_outputs(temperature_sensor_get_type_name(), lastTemperature, lastTempValid,
+                                           humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid);
         } else {
             buzzer_update(); // keep buzzer pattern responsive between LCD refreshes
         }
@@ -168,14 +227,16 @@ void app_main(void) {
     gpio_set_direction(ACK_BUTTON_GPIO, GPIO_MODE_INPUT);
     gpio_set_pull_mode(ACK_BUTTON_GPIO, GPIO_PULLUP_ONLY);
 
-    nvs_storage_init();          // SRS1_002/003/004/008 (NVS config load)
+    nvs_storage_init();          // SRS1_002/003/004/008, SRS2_002/003/004/008 (NVS config load)
     temperature_sensor_init();   // SRS1_001
+    humidity_sensor_init();      // SRS2_001
     buzzer_init();
     lcd_init();
     sms_module_init();
     alarm_manager_init();
 
-    printf("Type GET / LOG / RESET / SET HIGH x / SET LOW x / SET RES x / SET HYST x\n");
+    printf("Type GET / LOG / RESET / SET HIGH x / SET LOW x / SET RES x / SET HYST x /\n"
+           "     SET HUMHIGH x / SET HUMLOW x / SET HUMRES x / SET HUMHYST x\n");
 
     xTaskCreate(console_task, "console_task", 4096, NULL, 5, NULL);
     xTaskCreate(coldwatch_task, "coldwatch_task", 4096, NULL, 5, NULL);

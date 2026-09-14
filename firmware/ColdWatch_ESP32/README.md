@@ -18,6 +18,17 @@ Cold-chain temperature monitor firmware, written in plain C against **ESP-IDF**
 | SRS1_009 | `lcd_show_normal()` prints the active sensor type name (`DS18B20` / `LM35` / `NTC`) from `temperature_sensor_get_type_name()`. |
 | SRS1_010 | Fault detection: DS18B20 no-presence-pulse / bad CRC / disconnect sentinel values, or ADC pinned near 0 or full-scale (open/short circuit). Debounced by `SENSOR_FAULT_CONSEC_READS`. Raises Alarm 1010 with the same 4 actions. |
 | SRS1_011 | `alarm_manager_update()` automatically clears Alarm 1007 once temperature is back in range for the hysteresis window, and Alarm 1010 once `SENSOR_RECOVER_CONSEC_READS` good reads occur. (Alarm 1006 auto-clears too by default for consistency — set `ENABLE_HIGH_AUTO_CLEAR` to 0 in `alarm_manager.h` if you need manual acknowledgement instead.) |
+| SRS2_001 | `humidity_sensor.c` reads humidity via the DHT11's bit-banged single-wire protocol (`components/dht11`). Protocol choice documented as an assumption since the requirement left it TBD ("GPIO or any other protocol"). |
+| SRS2_002 | `coldwatch_config_t.humidityHighLimit` (default 100.0), persisted in NVS, changeable via console command `SET HUMHIGH <value>`. |
+| SRS2_003 | `coldwatch_config_t.humidityLowLimit` (default 0.0), console command `SET HUMLOW <value>`. |
+| SRS2_004 | `coldwatch_config_t.humidityResolution` (default 0.1), console command `SET HUMRES <value>`. Applied via `humidity_round_to_resolution()`. |
+| SRS2_005 | Target ±3RH accuracy. **Caveat:** the DHT11 datasheet itself only guarantees ±5RH typical accuracy — a DHT22/AM2302 (±2-3RH) or a calibrated sensor would be needed to strictly meet ±3RH in practice; documented as a hardware limitation. |
+| SRS2_006 | `alarm_manager.c: raise_humidity_high()` → LCD alarm screen, SMS via `sms_module.c`, log entry in NVS, buzzer at `BUZZER_FREQ_HIGH_HUMIDITY_ALARM_HZ`. |
+| SRS2_007 | `alarm_manager.c: raise_humidity_low()` → same 4 actions, auto-clears per SRS2_011. |
+| SRS2_008 | `coldwatch_config_t.humidityHysteresis` (default 30) — same consecutive-sample debounce strategy as SRS1_008. |
+| SRS2_009 | `lcd_show_normal()` also prints the humidity sensor type name (`DHT11`) from `humidity_sensor_get_type_name()`, alongside the temperature sensor type (e.g. `DS18B20/DHT11`). |
+| SRS2_010 | Fault detection: DHT11 handshake timeout or checksum mismatch (electrical noise / bad wiring / disconnected sensor), debounced by `HUMIDITY_FAULT_CONSEC_READS`. Raises Alarm 2010 with the same 4 actions. Documented assumption, same pattern as SRS1_010. |
+| SRS2_011 | `alarm_manager_update_humidity()` automatically clears Alarm 2007 once humidity is back in range, and Alarm 2010 once `HUMIDITY_RECOVER_CONSEC_READS` good reads occur. Alarm 2006 auto-clears too by default (same `ENABLE_HIGH_AUTO_CLEAR` toggle as SRS1_011). (Requirement text says "clear alarm 1006 & 2010" — interpreted as referencing the existing SRS1_011 behavior plus the new 2010 fault alarm; 2006/2007 clear the same way for consistency.) |
 
 ## File Structure (all pure C, no C++ — one ESP-IDF component per module)
 
@@ -45,6 +56,14 @@ firmware/ColdWatch_ESP32/
       CMakeLists.txt
       include/temperature_sensor.h
       temperature_sensor.c          - sensor abstraction (DS18B20 / LM35 / NTC) + fault detection
+    dht11/
+      CMakeLists.txt
+      include/dht11.h
+      dht11.c                       - bit-banged DHT11 single-wire driver (raw temp+humidity read)
+    humidity_sensor/
+      CMakeLists.txt
+      include/humidity_sensor.h
+      humidity_sensor.c             - humidity sensor abstraction (DHT11) + fault detection (SRS2)
     nvs_storage/
       CMakeLists.txt
       include/nvs_storage.h
@@ -74,6 +93,7 @@ main
  ├─ common            (config.h - required by almost everything below)
  ├─ nvs_storage        → common
  ├─ temperature_sensor → common, onewire
+ ├─ humidity_sensor    → common, dht11
  ├─ buzzer             → common
  ├─ lcd_i2c            → common
  ├─ sms_module         → common
@@ -91,6 +111,7 @@ native C drivers (`driver/gpio.h`, `driver/i2c.h`, `driver/uart.h`, `driver/ledc
 |---|---|
 | DS18B20 data (with 4.7kΩ pull-up to 3.3V) | GPIO4 |
 | Analog sensor (LM35 / NTC), if selected | GPIO34 (ADC1_CH6) |
+| DHT11 data (temperature+humidity, with pull-up to 3.3V if not built into your module) | GPIO18 |
 | Buzzer (+) | GPIO25 |
 | SIM800L TX → ESP32 RX | GPIO16 |
 | ESP32 TX → SIM800L RX (use a level shifter / resistor divider, module is 3.3V-tolerant on most boards but check your module) | GPIO17 |
@@ -102,24 +123,87 @@ dedicated 4.0V regulated supply, not the ESP32 3.3V/5V pin.
 
 ## Building (ESP-IDF v5.1+)
 
+**IMPORTANT:** cloning this git repo only gives you the ColdWatch project
+code. **ESP-IDF itself (the SDK that provides headers like `driver/gpio.h`,
+the Xtensa toolchain, Python env, etc.) is a separate ~2-3GB install that is
+NOT part of this repo** and must be set up once per machine. If you clone
+this project onto a new PC and get errors like `driver/gpio.h not found` or
+`idf.py: command not found`, it means ESP-IDF hasn't been installed on that
+machine yet — see below.
+
+### One-time setup on a NEW machine
+
+Run the included setup script (installs ESP-IDF v5.1.4 into `~/esp/esp-idf`):
+
 ```bash
-. $IDF_PATH/export.sh
 cd firmware/ColdWatch_ESP32
-idf.py set-target esp32
+./setup_esp_idf.sh
+```
+
+(Or do it manually:)
+```bash
+mkdir -p ~/esp && cd ~/esp
+git clone -b v5.1.4 --recursive https://github.com/espressif/esp-idf.git
+cd esp-idf
+./install.sh esp32
+```
+
+**Linux:** if flashing later fails with `Path '/dev/ttyUSB0' is not
+readable`, add yourself to the `dialout` group and then **log out and back
+in** (group changes don't apply to already-open terminals):
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+### Every new terminal session
+
+ESP-IDF's environment variables (`IDF_PATH`, toolchain `PATH`, Python venv) do
+**not** persist across shells, so source the export script first:
+
+```bash
+. ~/esp/esp-idf/export.sh
+```
+
+### Configure & build
+
+```bash
+cd firmware/ColdWatch_ESP32
+idf.py set-target esp32   # only needed once, or after a fullclean
 idf.py build
 idf.py -p /dev/ttyUSB0 flash monitor
 ```
 
+### Shortcut
+
+A `build.sh` wrapper is included in this folder that sources
+`~/esp/esp-idf/export.sh` automatically, so you can skip the manual
+`export.sh` step:
+
+```bash
+./build.sh              # same as: idf.py build
+./build.sh set-target esp32
+./build.sh -p /dev/ttyUSB0 flash monitor
+./build.sh fullclean
+```
+
+If you installed ESP-IDF somewhere other than `~/esp/esp-idf`, set
+`IDF_INSTALL_DIR` before calling the script, e.g.
+`IDF_INSTALL_DIR=/opt/esp-idf ./build.sh build`.
+
 ## Runtime Configuration (Serial Monitor / console, 115200 baud)
 
 ```
-GET                  - print current config
+GET                  - print current config (temperature + humidity)
 SET HIGH 55.0        - set temperatureHighLimit
 SET LOW -5.0         - set temperatureLowLimit
 SET RES 0.5          - set temperatureResolution
 SET HYST 20          - set temperatureHysteresis (sample count)
+SET HUMHIGH 80.0     - set humidityHighLimit
+SET HUMLOW 10.0      - set humidityLowLimit
+SET HUMRES 0.5       - set humidityResolution
+SET HUMHYST 20       - set humidityHysteresis (sample count)
 LOG                  - dump the NVS alarm log
-RESET                - restore factory defaults
+RESET                - restore factory defaults (temperature + humidity)
 ```
 
 ## Open Items / Assumptions (from TBD requirements)
