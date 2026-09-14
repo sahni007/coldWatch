@@ -1,173 +1,169 @@
-/*
- * lcd_i2c.c
- * Standard 4-bit HD44780-over-PCF8574 driver, written directly against the
- * ESP-IDF I2C master driver (no Arduino Wire/LiquidCrystal_I2C dependency).
- */
 #include "lcd_i2c.h"
 #include "config.h"
-#include <string.h>
 #include <stdio.h>
-#include "driver/i2c_master.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <string.h>
+#include <time.h>
+#include "driver/gpio.h"
+#include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_ili9341.h"
 
-// PCF8574 bit layout used by most common backpacks:
-//   P0=RS  P1=RW  P2=EN  P3=Backlight  P4-P7=D4-D7
-#define LCD_BIT_RS        0x01
-#define LCD_BIT_EN        0x04
-#define LCD_BIT_BACKLIGHT 0x08
+#define TEXT_SCALE 2
+#define TEXT_HEIGHT (7 * TEXT_SCALE)
+#define TEXT_WIDTH (5 * TEXT_SCALE)
 
-// HD44780 commands
-#define LCD_CMD_CLEAR_DISPLAY   0x01
-#define LCD_CMD_RETURN_HOME     0x02
-#define LCD_CMD_ENTRY_MODE_SET  0x06
-#define LCD_CMD_DISPLAY_ON      0x0C
-#define LCD_CMD_FUNCTION_SET_4B 0x28
-#define LCD_CMD_SET_DDRAM_ADDR  0x80
+static esp_lcd_panel_handle_t s_panel;
 
-static i2c_master_bus_handle_t s_i2c_bus;
-static i2c_master_dev_handle_t s_lcd_device;
-
-static void i2c_master_init(void) {
-    const i2c_master_bus_config_t bus_config = {
-        .i2c_port = I2C_MASTER_PORT,
-        .sda_io_num = I2C_MASTER_SDA_GPIO,
-        .scl_io_num = I2C_MASTER_SCL_GPIO,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = 1,
+static const uint8_t *font_for_char(char c) {
+    static const uint8_t blank[5] = {0, 0, 0, 0, 0};
+    static const uint8_t digits[10][5] = {
+        {0x3e,0x51,0x49,0x45,0x3e}, {0x00,0x42,0x7f,0x40,0x00},
+        {0x42,0x61,0x51,0x49,0x46}, {0x21,0x41,0x45,0x4b,0x31},
+        {0x18,0x14,0x12,0x7f,0x10}, {0x27,0x45,0x45,0x45,0x39},
+        {0x3c,0x4a,0x49,0x49,0x30}, {0x01,0x71,0x09,0x05,0x03},
+        {0x36,0x49,0x49,0x49,0x36}, {0x06,0x49,0x49,0x29,0x1e}
     };
-    const i2c_device_config_t device_config = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address = LCD_I2C_ADDR,
-        .scl_speed_hz = I2C_MASTER_FREQ_HZ,
+    static const uint8_t letters[26][5] = {
+        {0x7e,0x11,0x11,0x11,0x7e}, {0x7f,0x49,0x49,0x49,0x36},
+        {0x3e,0x41,0x41,0x41,0x22}, {0x7f,0x41,0x41,0x22,0x1c},
+        {0x7f,0x49,0x49,0x49,0x41}, {0x7f,0x09,0x09,0x09,0x01},
+        {0x3e,0x41,0x49,0x49,0x7a}, {0x7f,0x08,0x08,0x08,0x7f},
+        {0x00,0x41,0x7f,0x41,0x00}, {0x20,0x40,0x41,0x3f,0x01},
+        {0x7f,0x08,0x14,0x22,0x41}, {0x7f,0x40,0x40,0x40,0x40},
+        {0x7f,0x02,0x0c,0x02,0x7f}, {0x7f,0x04,0x08,0x10,0x7f},
+        {0x3e,0x41,0x41,0x41,0x3e}, {0x7f,0x09,0x09,0x09,0x06},
+        {0x3e,0x41,0x51,0x21,0x5e}, {0x7f,0x09,0x19,0x29,0x46},
+        {0x46,0x49,0x49,0x49,0x31}, {0x01,0x01,0x7f,0x01,0x01},
+        {0x3f,0x40,0x40,0x40,0x3f}, {0x1f,0x20,0x40,0x20,0x1f},
+        {0x7f,0x20,0x18,0x20,0x7f}, {0x63,0x14,0x08,0x14,0x63},
+        {0x07,0x08,0x70,0x08,0x07}, {0x61,0x51,0x49,0x45,0x43}
     };
-
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, &s_i2c_bus));
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(s_i2c_bus, &device_config,
-                                               &s_lcd_device));
+    static const uint8_t punctuation[][5] = {
+        {0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x5f,0x00,0x00},
+        {0x00,0x36,0x36,0x00,0x00}, {0x08,0x08,0x08,0x08,0x08},
+        {0x00,0x60,0x60,0x00,0x00}, {0x02,0x01,0x51,0x09,0x06},
+        {0x08,0x14,0x22,0x41,0x00}, {0x06,0x09,0x09,0x06,0x00}
+    };
+    if (c >= '0' && c <= '9') return digits[c - '0'];
+    if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
+    if (c == ' ') return punctuation[0];
+    if (c == ':') return punctuation[1];
+    if (c == '!') return punctuation[2];
+    if (c == '-') return punctuation[3];
+    if (c == '.') return punctuation[4];
+    if (c == '%') return punctuation[5];
+    if (c == '/') return punctuation[6];
+    if ((unsigned char)c == 0xb0) return punctuation[7];
+    return blank;
 }
 
-static esp_err_t i2c_write_byte_raw(uint8_t data) {
-    return i2c_master_transmit(s_lcd_device, &data, 1, 50);
+static void draw_text(uint16_t x, uint16_t y, const char *text, uint16_t color) {
+    uint16_t glyph[TEXT_WIDTH * TEXT_HEIGHT];
+    while (*text && x + TEXT_WIDTH <= LCD_WIDTH) {
+        const uint8_t *bitmap = font_for_char(*text++);
+        for (uint16_t row = 0; row < TEXT_HEIGHT; row++) {
+            for (uint16_t col = 0; col < TEXT_WIDTH; col++) {
+                uint16_t source_col = col / TEXT_SCALE;
+                uint16_t source_row = row / TEXT_SCALE;
+                glyph[row * TEXT_WIDTH + col] =
+                    (bitmap[source_col] & (1 << source_row)) ? color : 0x0000;
+            }
+        }
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(
+            s_panel, x, y, x + TEXT_WIDTH, y + TEXT_HEIGHT, glyph));
+        x += TEXT_WIDTH + TEXT_SCALE;
+    }
 }
 
-static void lcd_pulse_enable(uint8_t data) {
-    i2c_write_byte_raw(data | LCD_BIT_EN);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    i2c_write_byte_raw(data & ~LCD_BIT_EN);
-    vTaskDelay(pdMS_TO_TICKS(1));
-}
-
-static void lcd_write4bits(uint8_t nibble) {
-    uint8_t data = (nibble << 4) | LCD_BIT_BACKLIGHT;
-    i2c_write_byte_raw(data);
-    lcd_pulse_enable(data);
-}
-
-static void lcd_send(uint8_t value, uint8_t mode_rs) {
-    uint8_t high_nibble = (value >> 4) & 0x0F;
-    uint8_t low_nibble  = value & 0x0F;
-
-    uint8_t data_high = (high_nibble << 4) | LCD_BIT_BACKLIGHT | (mode_rs ? LCD_BIT_RS : 0);
-    i2c_write_byte_raw(data_high);
-    lcd_pulse_enable(data_high);
-
-    uint8_t data_low = (low_nibble << 4) | LCD_BIT_BACKLIGHT | (mode_rs ? LCD_BIT_RS : 0);
-    i2c_write_byte_raw(data_low);
-    lcd_pulse_enable(data_low);
-}
-
-static void lcd_command(uint8_t cmd) {
-    lcd_send(cmd, 0);
-}
-
-static void lcd_write_char(char c) {
-    lcd_send((uint8_t)c, 1);
-}
-
-static void lcd_write_string(const char *s) {
-    while (*s) lcd_write_char(*s++);
-}
-
-static void lcd_set_cursor(uint8_t col, uint8_t row) {
-    static const uint8_t row_offsets[] = {0x00, 0x40};
-    if (row >= LCD_ROWS) row = LCD_ROWS - 1;
-    lcd_command(LCD_CMD_SET_DDRAM_ADDR | (col + row_offsets[row]));
-}
-
-static void lcd_clear(void) {
-    lcd_command(LCD_CMD_CLEAR_DISPLAY);
-    vTaskDelay(pdMS_TO_TICKS(2));
-}
-
-static void lcd_print_padded(const char *s, uint8_t width) {
-    uint8_t len = (uint8_t)strlen(s);
-    lcd_write_string(s);
-    for (uint8_t i = len; i < width; i++) lcd_write_char(' ');
+static void clear_screen(void) {
+    static uint16_t row[LCD_WIDTH * 20];
+    memset(row, 0, sizeof(row));
+    for (uint16_t y = 0; y < LCD_HEIGHT; y += 20) {
+        uint16_t height = (LCD_HEIGHT - y < 20) ? LCD_HEIGHT - y : 20;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_WIDTH, y + height, row));
+    }
 }
 
 void lcd_init(void) {
-    i2c_master_init();
-    vTaskDelay(pdMS_TO_TICKS(50)); // wait for LCD power-on
+    spi_bus_config_t bus_config = {
+        .sclk_io_num = LCD_SPI_SCLK_GPIO,
+        .mosi_io_num = LCD_SPI_MOSI_GPIO,
+        .miso_io_num = LCD_SPI_MISO_GPIO,
+        .quadwp_io_num = -1,
+        .quadhd_io_num = -1,
+        .max_transfer_sz = LCD_WIDTH * 20 * sizeof(uint16_t),
+    };
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO));
 
-    // HD44780 4-bit initialization sequence
-    lcd_write4bits(0x03);
-    vTaskDelay(pdMS_TO_TICKS(5));
-    lcd_write4bits(0x03);
-    vTaskDelay(pdMS_TO_TICKS(5));
-    lcd_write4bits(0x03);
-    vTaskDelay(pdMS_TO_TICKS(1));
-    lcd_write4bits(0x02); // switch to 4-bit mode
+    esp_lcd_panel_io_handle_t io;
+    esp_lcd_panel_io_spi_config_t io_config = {
+        .cs_gpio_num = LCD_SPI_CS_GPIO,
+        .dc_gpio_num = LCD_SPI_DC_GPIO,
+        .pclk_hz = 20 * 1000 * 1000,
+        .spi_mode = 0,
+        .trans_queue_depth = 10,
+        .lcd_cmd_bits = 8,
+        .lcd_param_bits = 8,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(
+        (esp_lcd_spi_bus_handle_t)SPI2_HOST, &io_config, &io));
 
-    lcd_command(LCD_CMD_FUNCTION_SET_4B); // 4-bit, 2 line, 5x8 font
-    lcd_command(LCD_CMD_DISPLAY_ON);      // display on, cursor off, blink off
-    lcd_clear();
-    lcd_command(LCD_CMD_ENTRY_MODE_SET);  // increment cursor, no shift
+    esp_lcd_panel_dev_config_t panel_config = {
+        .reset_gpio_num = LCD_SPI_RESET_GPIO,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .bits_per_pixel = 16,
+    };
+    ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io, &panel_config, &s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
+    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, false, false));
+    ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
-    lcd_set_cursor(0, 0);
-    lcd_write_string("ColdWatch Boot");
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    lcd_clear();
+    gpio_set_direction(LCD_SPI_BACKLIGHT_GPIO, GPIO_MODE_OUTPUT);
+    gpio_set_level(LCD_SPI_BACKLIGHT_GPIO, 1);
+    clear_screen();
+    draw_text(12, 20, "COLDWATCH", 0xffff);
 }
 
 void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_valid,
-                      const char *humidity_sensor_type_name, float humidity, bool humidity_valid) {
-    char line0[LCD_COLUMNS + 1];
-    char line1[32]; // generous scratch buffer; lcd_print_padded() truncates to LCD_COLUMNS for display
+                     const char *humidity_sensor_type_name, float humidity, bool humidity_valid) {
+    char date_line[32];
+    char time_line[32];
+    char temperature_line[32];
+    char humidity_line[32];
+    time_t current_time = time(NULL);
+    struct tm current_tm;
 
-    // SRS1_009 / SRS2_009: show both the temperature and humidity sensor
-    // type names (e.g. "DS18B20/DHT11").
-    snprintf(line0, sizeof(line0), "%s/%s", sensor_type_name, humidity_sensor_type_name);
+    localtime_r(&current_time, &current_tm);
+    clear_screen();
+    snprintf(date_line, sizeof(date_line), "DATE : %02d/%02d/%02d",
+             current_tm.tm_mday, current_tm.tm_mon + 1, (current_tm.tm_year + 1900) % 100);
+    snprintf(time_line, sizeof(time_line), "TIME : %02d:%02d:%02d",
+             current_tm.tm_hour, current_tm.tm_min, current_tm.tm_sec);
+    if (temp_valid) snprintf(temperature_line, sizeof(temperature_line), "TEMP : %04.1f \xb0" "C", temperature);
+    else snprintf(temperature_line, sizeof(temperature_line), "TEMP : --.- \xb0" "C");
+    if (humidity_valid) snprintf(humidity_line, sizeof(humidity_line), "HUM : %04.1f %%RH", humidity);
+    else snprintf(humidity_line, sizeof(humidity_line), "HUM : --.- %%RH");
 
-    char temp_part[10];
-    char hum_part[10];
-    if (temp_valid) {
-        snprintf(temp_part, sizeof(temp_part), "%.1fC", temperature);
-    } else {
-        snprintf(temp_part, sizeof(temp_part), "--.-C");
-    }
-    if (humidity_valid) {
-        snprintf(hum_part, sizeof(hum_part), "%.1f%%", humidity);
-    } else {
-        snprintf(hum_part, sizeof(hum_part), "--.-%%");
-    }
-    snprintf(line1, sizeof(line1), "T:%s H:%s", temp_part, hum_part);
+    draw_text(12, 8, "COLD STORAGE", 0xffff);
+    draw_text(12, 38, date_line, 0xffff);
+    draw_text(12, 68, time_line, 0xffff);
+    draw_text(12, 98, temperature_line, 0x07e0);
+    draw_text(12, 128, humidity_line, 0x07ff);
+    draw_text(12, 158, "GSM: 4G WIFI: OK", 0xffff);
+    draw_text(12, 188, "STATUS: NORMAL", 0x07e0);
 
-    lcd_set_cursor(0, 0);
-    lcd_print_padded(line0, LCD_COLUMNS);
-    lcd_set_cursor(0, 1);
-    lcd_print_padded(line1, LCD_COLUMNS);
+    printf("LCD:\nCOLD STORAGE\n%s\n%s\n%s\n%s\nGSM: 4G WIFI: OK\nSTATUS: NORMAL\n",
+           date_line, time_line, temperature_line, humidity_line);
+    (void)sensor_type_name;
+    (void)humidity_sensor_type_name;
 }
 
 void lcd_show_alarm(uint16_t alarm_id, const char *text) {
-    char line0[LCD_COLUMNS + 1];
-    snprintf(line0, sizeof(line0), "ALARM %u", alarm_id);
-
-    lcd_set_cursor(0, 0);
-    lcd_print_padded(line0, LCD_COLUMNS);
-    lcd_set_cursor(0, 1);
-    lcd_print_padded(text, LCD_COLUMNS);
+    char line[32];
+    clear_screen();
+    snprintf(line, sizeof(line), "ALARM %u", alarm_id);
+    draw_text(12, 60, line, 0xf800);
+    draw_text(12, 115, text, 0xf800);
 }
-
-

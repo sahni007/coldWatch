@@ -3,7 +3,7 @@
  * SRS1_006/007/010, SRS2_006/007/010: "Display the alarm on the LCD"
  * SRS1_009 / SRS2_009: "display the type of sensor on the LCD (supporting
  * multiple sensor types)"
- * Driver for a 16x2 HD44780 LCD behind a PCF8574 I2C backpack.
+ * ILI9341 240x320 TFT driver over SPI.
  */
 #ifndef COLDWATCH_LCD_I2C_H
 #define COLDWATCH_LCD_I2C_H

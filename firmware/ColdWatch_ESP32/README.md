@@ -79,7 +79,7 @@ firmware/ColdWatch_ESP32/
     lcd_i2c/
       CMakeLists.txt
       include/lcd_i2c.h
-      lcd_i2c.c                     - I2C 16x2 HD44780/PCF8574 LCD driver (bit-level, no Arduino lib)
+      lcd_i2c.c                     - ILI9341 240x320 SPI TFT driver with a small built-in font
     sms_module/
       CMakeLists.txt
       include/sms_module.h
@@ -116,7 +116,18 @@ native C drivers (`driver/gpio.h`, `driver/i2c.h`, `driver/uart.h`, `driver/ledc
 | SIM800L TX → ESP32 RX | GPIO16 |
 | ESP32 TX → SIM800L RX (use a level shifter / resistor divider, module is 3.3V-tolerant on most boards but check your module) | GPIO17 |
 | Push button (other leg to GND) — silence buzzer | GPIO27 |
-| LCD I2C SDA / SCL | GPIO21 / GPIO22 |
+| ILI9341 SCK / CLK | GPIO14 |
+| ILI9341 MOSI / SDI | GPIO13 |
+| ILI9341 MISO / SDO | GPIO12 |
+| ILI9341 CS | GPIO15 |
+| ILI9341 DC / RS | GPIO2 |
+| ILI9341 RESET | ESP32 EN/reset line |
+| ILI9341 LED / BL | GPIO21 |
+
+Connect TFT `VCC` to the voltage specified by the module (normally 3.3 V),
+`GND` to ESP32 GND, and do not connect the old I2C backpack pins. The optional
+touch-controller pins (`T_CLK`, `T_CS`, `T_DIN`, `T_DO`, `T_IRQ`) are not needed
+for displaying sensor values.
 
 **Power note:** SIM800L draws up to ~2A current spikes during transmit — power it from a
 dedicated 4.0V regulated supply, not the ESP32 3.3V/5V pin.

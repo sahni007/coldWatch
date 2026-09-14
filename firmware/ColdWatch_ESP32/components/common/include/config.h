@@ -43,14 +43,16 @@
 // but the getter function pattern mirrors SRS1_009 so more types could be
 // added later the same way ACTIVE_SENSOR_TYPE works for temperature.
 
-// I2C bus for LCD (PCF8574 HD44780 backpack)
-#define I2C_MASTER_PORT       I2C_NUM_0
-#define I2C_MASTER_SDA_GPIO   GPIO_NUM_21
-#define I2C_MASTER_SCL_GPIO   GPIO_NUM_22
-#define I2C_MASTER_FREQ_HZ    100000
-#define LCD_I2C_ADDR          0x27
-#define LCD_COLUMNS           16
-#define LCD_ROWS              2
+// ILI9341 TFT display over SPI. These pins avoid the sensor and modem pins.
+#define LCD_SPI_SCLK_GPIO       GPIO_NUM_14
+#define LCD_SPI_MOSI_GPIO       GPIO_NUM_13
+#define LCD_SPI_MISO_GPIO       GPIO_NUM_12
+#define LCD_SPI_CS_GPIO         GPIO_NUM_15
+#define LCD_SPI_DC_GPIO         GPIO_NUM_2
+#define LCD_SPI_RESET_GPIO      (-1)  // TFT RESET is connected to ESP32 EN
+#define LCD_SPI_BACKLIGHT_GPIO  GPIO_NUM_21
+#define LCD_WIDTH               240
+#define LCD_HEIGHT              320
 
 // UART for SIM800L / SIM900 GSM module
 #define GSM_UART_PORT         UART_NUM_2
