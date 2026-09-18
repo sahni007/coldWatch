@@ -118,7 +118,9 @@
 #define BATTERY_CRITICAL_PERCENT          5      // SRS3_006: at/below this -> critical, snapshot + save
 #define BATTERY_LOW_HYSTERESIS_CNT        5      // consecutive samples to confirm/clear low-battery
 #define BATTERY_CRITICAL_HYSTERESIS_CNT   5      // consecutive samples to confirm/clear critical-battery
-
+#define ALARM_ID_POWER_SOURCE   3001   // SRS3_001/003 (main power lost/restored)
+#define ALARM_ID_LOW_BATTERY    3005   // SRS3_005
+#define ALARM_ID_CRITICAL_BATTERY 3006 // SRS3_006
 // DHT11 temperature/humidity sensor (optional, independent of the main
 // cold-chain sensor above). Needs a 4.7k-10k pull-up to 3.3V on the data
 // line (most DHT11 breakout boards already include one on-board).

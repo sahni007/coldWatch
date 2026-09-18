@@ -45,7 +45,7 @@ static inline int64_t millis64(void) {
 static void init_calibration(void) {
     adc_cali_line_fitting_config_t cali_config = {
         .unit_id  = ADC_UNIT_1,
-        .atten    = ADC_ATTEN_DB_11,
+        .atten    = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
 #if CONFIG_IDF_TARGET_ESP32
         .default_vref = 1100, // mV; used only if eFuse Vref/TP calibration bits aren't burnt
@@ -68,7 +68,7 @@ void power_source_init(void) {
         .ulp_mode = ADC_ULP_MODE_DISABLE,
     };
     const adc_oneshot_chan_cfg_t channel_config = {
-        .atten    = ADC_ATTEN_DB_11,   // ~0-3.9V full-scale, covers a 3.3V rail
+        .atten    = ADC_ATTEN_DB_12,   // ~0-3.9V full-scale, covers a 3.3V rail
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_config, &s_adc_handle));
@@ -112,7 +112,7 @@ static float read_channel_voltage(adc_channel_t chan) {
         }
     }
 
-    // Fallback: 12-bit ADC (0-4095), ~3.9V full-scale at ADC_ATTEN_DB_11.
+    // Fallback: 12-bit ADC (0-4095), ~3.9V full-scale at ADC_ATTEN_DB_12.
     return (raw * 3.9f) / 4095.0f;
 }
 

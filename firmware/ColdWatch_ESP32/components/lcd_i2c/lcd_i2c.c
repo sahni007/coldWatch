@@ -133,7 +133,7 @@ void lcd_init(void) {
     esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = LCD_SPI_CS_GPIO,
         .dc_gpio_num = LCD_SPI_DC_GPIO,
-        .pclk_hz = 20 * 1000 * 1000,
+        .pclk_hz = 4 * 1000 * 1000,
         .spi_mode = 0,
         .trans_queue_depth = 1,
         .lcd_cmd_bits = 8,

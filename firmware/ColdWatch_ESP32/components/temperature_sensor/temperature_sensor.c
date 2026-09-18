@@ -33,7 +33,7 @@ void temperature_sensor_init(void) {
         .ulp_mode = ADC_ULP_MODE_DISABLE,
     };
     const adc_oneshot_chan_cfg_t channel_config = {
-        .atten = ADC_ATTEN_DB_11,
+        .atten = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
     ESP_ERROR_CHECK(adc_oneshot_new_unit(&unit_config, &s_adc_handle));
@@ -115,7 +115,7 @@ static bool read_analog_lm35(float *temp_c) {
     if (raw <= ANALOG_OPEN_LOW_RAW || raw >= ANALOG_OPEN_HIGH_RAW) {
         return false;
     }
-    float voltage = (raw * 3.9f) / 4095.0f; // ~0-3.9V full-scale at ADC_ATTEN_DB_11
+    float voltage = (raw * 3.9f) / 4095.0f; // ~0-3.9V full-scale at ADC_ATTEN_DB_12
     *temp_c = voltage * 100.0f;             // LM35: 10mV per degree C
     return true;
 }
