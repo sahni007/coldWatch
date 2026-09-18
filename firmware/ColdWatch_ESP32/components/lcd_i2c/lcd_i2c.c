@@ -118,6 +118,13 @@ static void clear_screen(void) {
     }
 }
 
+static void clear_text_line(uint16_t y) {
+    static uint16_t row[LCD_WIDTH * TEXT_HEIGHT];
+    memset(row, 0, sizeof(row));
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_WIDTH,
+                                               y + TEXT_HEIGHT, row));
+}
+
 void lcd_init(void) {
     spi_bus_config_t bus_config = {
         .sclk_io_num = LCD_SPI_SCLK_GPIO,
@@ -133,7 +140,7 @@ void lcd_init(void) {
     esp_lcd_panel_io_spi_config_t io_config = {
         .cs_gpio_num = LCD_SPI_CS_GPIO,
         .dc_gpio_num = LCD_SPI_DC_GPIO,
-        .pclk_hz = 4 * 1000 * 1000,
+        .pclk_hz = 50 * 1000 * 1000,
         .spi_mode = 0,
         .trans_queue_depth = 1,
         .lcd_cmd_bits = 8,
@@ -158,7 +165,7 @@ void lcd_init(void) {
     gpio_set_direction(LCD_SPI_BACKLIGHT_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(LCD_SPI_BACKLIGHT_GPIO, 1);
     clear_screen();
-    draw_text(12, 20, "COLDWATCH", 0xffff);
+    draw_text(12, 8, "COLD STORAGE", 0xffff);
 }
 
 void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_valid,
@@ -174,7 +181,6 @@ void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_
     struct tm current_tm;
 
     localtime_r(&current_time, &current_tm);
-    clear_screen();
     snprintf(date_line, sizeof(date_line), "DATE : %02d/%02d/%02d",
              current_tm.tm_mday, current_tm.tm_mon + 1, (current_tm.tm_year + 1900) % 100);
     snprintf(time_line, sizeof(time_line), "TIME : %02d:%02d:%02d",
@@ -197,7 +203,14 @@ void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_
     }
     (void)battery_reading_is_accurate; // reserved for future LCD annotation
 
-    draw_text(12, 8, "COLD STORAGE", 0xffff);
+    clear_text_line(38);
+    clear_text_line(68);
+    clear_text_line(98);
+    clear_text_line(128);
+    clear_text_line(158);
+    clear_text_line(188);
+    clear_text_line(218);
+
     draw_text(12, 38, date_line, 0xffff);
     draw_text(12, 68, time_line, 0xffff);
     draw_text(12, 98, temperature_line, 0x07e0);

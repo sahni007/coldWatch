@@ -58,10 +58,7 @@ static void notify(uint16_t alarm_id, uint8_t event_type, float temperature,
             event_type == LOG_EVENT_RAISED ? "RAISED" : "CLEARED",
             alarm_id, temperature);
 
-    // Display on LCD (SRS1_006/007/010), including current power/battery status
-    // (SRS3_001/003/004) so it stays visible during any alarm.
-    lcd_show_alarm(alarm_id, lcd_line, s_last_power_source_name,
-                    s_last_battery_voltage, s_last_battery_percentage);
+    (void)lcd_line;
 
     // Send SMS (SRS1_006/007/010) - only on RAISE, not on clear, to limit SMS cost/spam.
     if (event_type == LOG_EVENT_RAISED) {
@@ -363,42 +360,10 @@ void alarm_manager_refresh_outputs(const char *sensor_type_name, float last_temp
                                     const char *humidity_sensor_type_name, float last_humidity, bool last_humidity_valid,
                                     const char *power_source_name, float battery_voltage, uint8_t battery_percentage,
                                     bool battery_reading_is_accurate) {
-    // Priority: critical battery > power lost > low battery > temp sensor fault
-    //           > humidity sensor fault > high temp > low temp > high humidity
-    //           > low humidity > normal display
-    if (s_battery_critical_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_CRITICAL_BATTERY, "BATT CRITICAL!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_power_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_POWER_SOURCE, "ON BATTERY!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_battery_low_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_LOW_BATTERY, "LOW BATTERY!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_fault_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_SENSOR_FAULT, "SENSOR FAULT!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_humidity_fault_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_HUMIDITY_SENSOR_FAULT, "HUM SENSOR FAULT",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_high_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_HIGH_TEMP, "HIGH TEMP!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_low_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_LOW_TEMP, "LOW TEMP!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_humidity_high_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_HIGH_HUMIDITY, "HIGH HUMIDITY!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_humidity_low_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_LOW_HUMIDITY, "LOW HUMIDITY!",
-                        power_source_name, battery_voltage, battery_percentage);
-    } else {
-        lcd_show_normal(sensor_type_name, last_temperature, last_temp_valid,
-                         humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                         power_source_name, battery_voltage, battery_percentage,
-                         battery_reading_is_accurate);
-    }
+    lcd_show_normal(sensor_type_name, last_temperature, last_temp_valid,
+                    humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                    power_source_name, battery_voltage, battery_percentage,
+                    battery_reading_is_accurate);
 
     buzzer_update();
 }

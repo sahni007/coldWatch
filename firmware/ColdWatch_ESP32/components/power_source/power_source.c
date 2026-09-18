@@ -176,10 +176,24 @@ bool power_source_update(void) {
     }
     s_last_voltage = voltage;
 
+    // Print both ADC inputs periodically for wiring/debug verification.
+    static int64_t last_adc_log_ms = 0;
+    int64_t now = millis64();
+    if (now - last_adc_log_ms >= 1000) {
+        last_adc_log_ms = now;
+#if ACTIVE_BATTERY_SENSE_MODE == BATTERY_SENSE_MODE_DIRECT || \
+    ACTIVE_BATTERY_SENSE_MODE == BATTERY_SENSE_MODE_RAIL_SAG
+        float battery_adc_voltage = read_channel_voltage(BATTERY_ADC_CHAN);
+        ESP_LOGI(TAG, "ADC: mains GPIO34=%.3f V, battery GPIO35=%.3f V, battery=%.3f V (%u%%)",
+                 voltage, battery_adc_voltage, s_battery_voltage, s_battery_percentage);
+#else
+        ESP_LOGI(TAG, "ADC: mains GPIO34=%.3f V, battery status GPIO35=%d",
+                 voltage, gpio_get_level(BATTERY_STATUS_GPIO));
+#endif
+    }
+
     power_source_state_t instantaneous =
         (voltage >= POWER_SOURCE_MAIN_VOLTAGE_THRESHOLD) ? POWER_SOURCE_MAIN : POWER_SOURCE_BATTERY;
-
-    int64_t now = millis64();
 
     if (s_first_sample) {
         // Seed the filter with the real, current reading on boot so we
