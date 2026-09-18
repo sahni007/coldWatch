@@ -66,7 +66,7 @@
 // Persisted at runtime in ESP32 NVS (see nvs_storage.c) and changeable via
 // the serial console (see main.c "SET ..." commands).
 // ============================================================
-#define DEFAULT_TEMP_HIGH_LIMIT      50.0f   // SRS1_002
+    #define DEFAULT_TEMP_HIGH_LIMIT      30.0f   // SRS1_002
 #define DEFAULT_TEMP_LOW_LIMIT        0.0f   // SRS1_003
 #define DEFAULT_TEMP_RESOLUTION       0.1f   // SRS1_004 (deg C per step)
 
@@ -76,7 +76,7 @@
 // the change as real (debounce / anti-chatter filter), i.e. a "count" of
 // samples, not a temperature delta. At a 1s sample rate this is a 30s
 // confirmation window. (Documented assumption - spec text is ambiguous.)
-#define DEFAULT_TEMP_HYSTERESIS_CNT   30
+#define DEFAULT_TEMP_HYSTERESIS_CNT   3
 
 // ============================================================
 // SRS2_002 / SRS2_003 / SRS2_004 / SRS2_008: humidity configurable properties

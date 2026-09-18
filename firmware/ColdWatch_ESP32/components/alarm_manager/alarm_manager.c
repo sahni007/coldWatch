@@ -37,6 +37,10 @@ static void notify(uint16_t alarm_id, uint8_t event_type, float temperature,
     // Log to NVS (SRS1_006/007/010 "Record the event in a log file")
     nvs_storage_append_log(alarm_id, event_type, temperature);
 
+        printf("[ALARM] %s ID=%u temperature=%.1f C\n",
+            event_type == LOG_EVENT_RAISED ? "RAISED" : "CLEARED",
+            alarm_id, temperature);
+
     // Display on LCD (SRS1_006/007/010)
     lcd_show_alarm(alarm_id, lcd_line);
 

@@ -42,14 +42,14 @@ static const uint8_t *font_for_char(char c) {
     static const uint8_t punctuation[][5] = {
         {0x00,0x00,0x00,0x00,0x00}, {0x00,0x00,0x5f,0x00,0x00},
         {0x00,0x36,0x36,0x00,0x00}, {0x08,0x08,0x08,0x08,0x08},
-        {0x00,0x60,0x60,0x00,0x00}, {0x02,0x01,0x51,0x09,0x06},
-        {0x08,0x14,0x22,0x41,0x00}, {0x06,0x09,0x09,0x06,0x00}
+        {0x00,0x60,0x60,0x00,0x00}, {0x23,0x13,0x08,0x64,0x62},
+        {0x00,0x60,0x18,0x06,0x01}, {0x06,0x09,0x09,0x06,0x00}
     };
     if (c >= '0' && c <= '9') return digits[c - '0'];
     if (c >= 'A' && c <= 'Z') return letters[c - 'A'];
     if (c == ' ') return punctuation[0];
-    if (c == ':') return punctuation[1];
-    if (c == '!') return punctuation[2];
+    if (c == ':') return punctuation[2];
+    if (c == '!') return punctuation[1];
     if (c == '-') return punctuation[3];
     if (c == '.') return punctuation[4];
     if (c == '%') return punctuation[5];
@@ -57,7 +57,10 @@ static const uint8_t *font_for_char(char c) {
     if ((unsigned char)c == 0xb0) return punctuation[7];
     return blank;
 }
-
+static inline uint16_t swap16(uint16_t v) {
+    return (v << 8) | (v >> 8);
+}
+#if 0
 static void draw_text(uint16_t x, uint16_t y, const char *text, uint16_t color) {
     uint16_t glyph[TEXT_WIDTH * TEXT_HEIGHT];
     while (*text && x + TEXT_WIDTH <= LCD_WIDTH) {
@@ -75,6 +78,36 @@ static void draw_text(uint16_t x, uint16_t y, const char *text, uint16_t color) 
         x += TEXT_WIDTH + TEXT_SCALE;
     }
 }
+    #else
+    static void draw_text(uint16_t x, uint16_t y, const char *text, uint16_t color) {
+    uint16_t len = strlen(text);
+    uint16_t line_width = len * (TEXT_WIDTH + TEXT_SCALE);
+    if (x + line_width > LCD_WIDTH) {
+        line_width = LCD_WIDTH - x;
+        len = line_width / (TEXT_WIDTH + TEXT_SCALE);
+    }
+    if (len == 0) return;
+
+    static uint16_t glyph[LCD_WIDTH * TEXT_HEIGHT];
+    memset(glyph, 0, line_width * TEXT_HEIGHT * sizeof(uint16_t));
+
+    for (uint16_t i = 0; i < len; i++) {
+        const uint8_t *bitmap = font_for_char(text[i]);
+        uint16_t x_off = i * (TEXT_WIDTH + TEXT_SCALE);
+        for (uint16_t row = 0; row < TEXT_HEIGHT; row++) {
+            for (uint16_t col = 0; col < TEXT_WIDTH; col++) {
+                uint16_t source_col = col / TEXT_SCALE;
+                uint16_t source_row = row / TEXT_SCALE;
+                glyph[row * line_width + x_off + col] =
+                    (bitmap[source_col] & (1 << source_row)) ? color : 0x0000;
+            }
+        }
+    }
+
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(
+        s_panel, x, y, x + line_width, y + TEXT_HEIGHT, glyph));
+}
+#endif
 
 static void clear_screen(void) {
     static uint16_t row[LCD_WIDTH * 20];
@@ -94,7 +127,7 @@ void lcd_init(void) {
         .quadhd_io_num = -1,
         .max_transfer_sz = LCD_WIDTH * 20 * sizeof(uint16_t),
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_CH_AUTO));
+    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus_config, SPI_DMA_DISABLED));
 
     esp_lcd_panel_io_handle_t io;
     esp_lcd_panel_io_spi_config_t io_config = {
@@ -102,7 +135,7 @@ void lcd_init(void) {
         .dc_gpio_num = LCD_SPI_DC_GPIO,
         .pclk_hz = 20 * 1000 * 1000,
         .spi_mode = 0,
-        .trans_queue_depth = 10,
+        .trans_queue_depth = 1,
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
     };
@@ -111,13 +144,15 @@ void lcd_init(void) {
 
     esp_lcd_panel_dev_config_t panel_config = {
         .reset_gpio_num = LCD_SPI_RESET_GPIO,
-        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
+        .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB,
         .bits_per_pixel = 16,
     };
     ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(io, &panel_config, &s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
     ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
-    ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, false, false));
+   ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(s_panel, true));
+   // ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, false, false));   
+
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
 
     gpio_set_direction(LCD_SPI_BACKLIGHT_GPIO, GPIO_MODE_OUTPUT);

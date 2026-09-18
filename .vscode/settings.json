@@ -1,0 +1,5 @@
+{
+    "cmake.sourceDirectory": "C:/Users/LENOVO/Documents/coldWatch/coldWatch/firmware/ColdWatch_ESP32",
+    "idf.currentSetup": "C:\\Espressif\\v6.1\\esp-idf",
+    "idf.portWin": "COM7"
+}
