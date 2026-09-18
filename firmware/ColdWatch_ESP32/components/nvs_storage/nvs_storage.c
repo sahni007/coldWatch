@@ -14,6 +14,7 @@ static const char *TAG = "NVS_STORAGE";
 #define NVS_NAMESPACE   "coldwatch"
 #define KEY_CONFIG      "cfg"
 #define KEY_LOG_IDX     "log_idx"
+#define KEY_EMRG_SNAP   "emrg_snap"
 
 static coldwatch_config_t s_config;
 static uint16_t s_log_write_index = 0;
@@ -126,5 +127,36 @@ void nvs_storage_dump_log(void) {
                entry.tempTimesHundred / 100.0f);
     }
     printf("---------------------------------\n");
+}
+
+// ---- SRS3_006: Emergency data snapshot ----
+void nvs_storage_save_emergency_snapshot(const coldwatch_emergency_snapshot_t *snap) {
+    ESP_ERROR_CHECK(nvs_set_blob(s_handle, KEY_EMRG_SNAP, snap, sizeof(*snap)));
+    ESP_ERROR_CHECK(nvs_commit(s_handle));
+    ESP_LOGW(TAG, "[SNAPSHOT] Saved emergency snapshot: temp=%.1f hum=%.1f battV=%.2f batt%%=%u onBattery=%d",
+             snap->temperature, snap->humidity, snap->batteryVoltage,
+             snap->batteryPercentage, snap->onBattery);
+}
+
+bool nvs_storage_load_emergency_snapshot(coldwatch_emergency_snapshot_t *out_snap) {
+    size_t sz = sizeof(*out_snap);
+    esp_err_t err = nvs_get_blob(s_handle, KEY_EMRG_SNAP, out_snap, &sz);
+    return (err == ESP_OK && sz == sizeof(*out_snap));
+}
+
+void nvs_storage_dump_emergency_snapshot(void) {
+    coldwatch_emergency_snapshot_t snap;
+    if (!nvs_storage_load_emergency_snapshot(&snap)) {
+        printf("No emergency snapshot saved.\n");
+        return;
+    }
+    printf("---- ColdWatch Emergency Snapshot ----\n");
+    printf("t=%lldms temp=%s%.1f hum=%s%.1f battV=%.2f batt%%=%u source=%s\n",
+           snap.timestampMs,
+           snap.temperatureValid ? "" : "(invalid) ", snap.temperature,
+           snap.humidityValid ? "" : "(invalid) ", snap.humidity,
+           snap.batteryVoltage, snap.batteryPercentage,
+           snap.onBattery ? "BATTERY" : "MAIN");
+    printf("---------------------------------------\n");
 }
 

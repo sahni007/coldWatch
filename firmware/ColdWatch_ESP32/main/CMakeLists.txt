@@ -7,6 +7,7 @@ idf_component_register(
     temperature_sensor
     humidity_sensor
     alarm_manager
+    power_source
     buzzer
     lcd_i2c
     sms_module

@@ -34,6 +34,20 @@ typedef struct {
 #define LOG_EVENT_CLEARED  1
 #define LOG_MAX_ENTRIES    64
 
+// ---- SRS3_006: Emergency data snapshot ----
+// Saved to NVS when the battery reaches BATTERY_CRITICAL_PERCENT, so the
+// last known readings survive a possible imminent power-off/brown-out.
+typedef struct {
+    int64_t timestampMs;
+    float   temperature;
+    uint8_t temperatureValid;   // 1 = 'temperature' is a real reading
+    float   humidity;
+    uint8_t humidityValid;      // 1 = 'humidity' is a real reading
+    float   batteryVoltage;
+    uint8_t batteryPercentage;
+    uint8_t onBattery;          // 1 = running on internal battery at snapshot time
+} coldwatch_emergency_snapshot_t;
+
 // Must be called once at startup (initializes nvs_flash + loads/creates config).
 void nvs_storage_init(void);
 
@@ -55,6 +69,12 @@ void nvs_storage_set_humidity_hysteresis(uint16_t v);
 // Log file (SRS1_006/007/010, SRS2_006/007/010 event recording)
 void nvs_storage_append_log(uint16_t alarmId, uint8_t eventType, float temperature);
 void nvs_storage_dump_log(void); // prints via printf/ESP_LOG
+
+// SRS3_006: emergency snapshot (persisted last-known state on critical battery)
+void nvs_storage_save_emergency_snapshot(const coldwatch_emergency_snapshot_t *snap);
+// Returns true if a previously-saved snapshot was found and loaded into 'out_snap'.
+bool nvs_storage_load_emergency_snapshot(coldwatch_emergency_snapshot_t *out_snap);
+void nvs_storage_dump_emergency_snapshot(void); // prints via printf, for the "SNAP" console command
 
 #endif // COLDWATCH_NVS_STORAGE_H
 

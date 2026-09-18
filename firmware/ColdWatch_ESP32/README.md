@@ -94,6 +94,7 @@ main
  ├─ nvs_storage        → common
  ├─ temperature_sensor → common, onewire
  ├─ humidity_sensor    → common, dht11
+ ├─ power_source       → common, esp_adc, esp_timer  (SRS3: mains + battery detection)
  ├─ buzzer             → common
  ├─ lcd_i2c            → common
  ├─ sms_module         → common
@@ -111,6 +112,8 @@ native C drivers (`driver/gpio.h`, `driver/i2c.h`, `driver/uart.h`, `driver/ledc
 |---|---|
 | DS18B20 data (with 4.7kΩ pull-up to 3.3V) | GPIO4 |
 | Analog sensor (LM35 / NTC), if selected | GPIO34 (ADC1_CH6) |
+| Mains power-supply sense (3.3V rail present = mains, 0V = on battery) — SRS3_001/003 | GPIO34 (ADC1_CH6, shared w/ analog sensor above; unused when DS18B20 is active) |
+| Internal battery + terminal, via 2:1 resistor divider — SRS3_004/005/006 | GPIO35 (ADC1_CH7) |
 | DHT11 data (temperature+humidity, with pull-up to 3.3V if not built into your module) | GPIO18 |
 | Buzzer (+) | GPIO25 |
 | SIM800L TX → ESP32 RX | GPIO16 |

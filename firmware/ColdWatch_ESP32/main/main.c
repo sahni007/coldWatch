@@ -48,6 +48,7 @@
 #include "buzzer.h"
 #include "lcd_i2c.h"
 #include "sms_module.h"
+#include "power_source.h"
 
 static const char *TAG = "ColdWatch";
 
@@ -110,6 +111,16 @@ static void process_console_command(const char *line) {
                cfg->humidityResolution, cfg->humidityHysteresis);
     } else if (strcmp(line, "LOG") == 0) {
         nvs_storage_dump_log();
+    } else if (strcmp(line, "POWER") == 0) {
+        printf("Power source: %s (last sensed voltage: %.2fV on GPIO%u) | "
+               "Battery: %u%% (%.2fV on GPIO%u) [%s]\n",
+               power_source_get_state_name(), power_source_get_last_voltage(),
+               (unsigned)POWER_SOURCE_GPIO,
+               power_source_get_battery_percentage(), power_source_get_battery_voltage(),
+               (unsigned)BATTERY_GPIO,
+               power_source_battery_reading_is_accurate() ? "ACCURATE" : "ESTIMATE/STATUS-ONLY");
+    } else if (strcmp(line, "SNAP") == 0) {
+        nvs_storage_dump_emergency_snapshot();
     } else if (strcmp(line, "RESET") == 0) {
         nvs_storage_reset_config_to_defaults();
         printf("OK: config reset to defaults\n");
@@ -154,9 +165,26 @@ static void handle_ack_button(void) {
 static void coldwatch_task(void *arg) {
     int64_t last_lcd_refresh_ms = 0;
     int64_t last_humidity_sample_ms = 0;
+    int64_t last_power_sample_ms = 0;
 
     while (1) {
         int64_t now = millis64();
+
+        // ---- Sample the main power-supply detector (GPIO34) ----
+        // ~3.3V => mains power present, ~0V => running on internal battery.
+        // power_source_update() applies its own debounce window internally
+        // (POWER_SOURCE_DEBOUNCE_WINDOW_MS).
+        if (now - last_power_sample_ms >= POWER_SOURCE_SAMPLE_INTERVAL_MS) {
+            last_power_sample_ms = now;
+            power_source_update();
+            alarm_manager_update_power(power_source_is_battery());
+            // SRS3_004/005/006: battery voltage/percentage monitoring
+            alarm_manager_update_battery(power_source_get_battery_voltage(),
+                                          power_source_get_battery_percentage(),
+                                          power_source_is_battery(),
+                                          lastTemperature, lastTempValid,
+                                          lastHumidity, lastHumidityValid);
+        }
 
         // ---- Sample the humidity sensor at fixed interval (SRS2_001) ----
         if (now - last_humidity_sample_ms >= DHT11_SAMPLE_INTERVAL_MS) {
@@ -195,9 +223,13 @@ static void coldwatch_task(void *arg) {
         // ---- Refresh LCD / buzzer pattern ----
         if (now - last_lcd_refresh_ms >= LCD_REFRESH_INTERVAL_MS) {
             last_lcd_refresh_ms = now;
-            // SRS1_009 / SRS2_009
+            // SRS1_009 / SRS2_009 / SRS3_001/003/004
             alarm_manager_refresh_outputs(humidity_sensor_get_type_name(), lastTemperature, lastTempValid,
-                                           humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid);
+                                           humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid,
+                                           power_source_get_state_name(),
+                                           power_source_get_battery_voltage(),
+                                           power_source_get_battery_percentage(),
+                                           power_source_battery_reading_is_accurate());
         } else {
             buzzer_update(); // keep buzzer pattern responsive between LCD refreshes
         }
@@ -219,12 +251,24 @@ void app_main(void) {
     nvs_storage_init();          // SRS1_002/003/004/008, SRS2_002/003/004/008 (NVS config load)
     temperature_sensor_init();   // SRS1_001
     humidity_sensor_init();      // SRS2_001
+    power_source_init();         // Main power-supply detection (GPIO34) + battery monitoring (GPIO35)
     buzzer_init();
     lcd_init();
     sms_module_init();
     alarm_manager_init();
 
-    printf("Type GET / LOG / RESET / SET HIGH x / SET LOW x / SET RES x / SET HYST x /\n"
+    // SRS3_006: report any emergency snapshot saved during a previous
+    // critical-battery event, so it can be recovered/inspected after reboot.
+    {
+        coldwatch_emergency_snapshot_t snap;
+        if (nvs_storage_load_emergency_snapshot(&snap)) {
+            ESP_LOGW(TAG, "Found emergency snapshot from a previous critical-battery event "
+                          "(t=%lldms, batt=%u%%) - type SNAP to view",
+                     snap.timestampMs, snap.batteryPercentage);
+        }
+    }
+
+    printf("Type GET / LOG / POWER / SNAP / RESET / SET HIGH x / SET LOW x / SET RES x / SET HYST x /\n"
            "     SET HUMHIGH x / SET HUMLOW x / SET HUMRES x / SET HUMHYST x\n");
 
     xTaskCreate(console_task, "console_task", 4096, NULL, 5, NULL);

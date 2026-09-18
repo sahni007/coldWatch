@@ -162,11 +162,14 @@ void lcd_init(void) {
 }
 
 void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_valid,
-                     const char *humidity_sensor_type_name, float humidity, bool humidity_valid) {
+                     const char *humidity_sensor_type_name, float humidity, bool humidity_valid,
+                     const char *power_source_name, float battery_voltage, uint8_t battery_percentage,
+                     bool battery_reading_is_accurate) {
     char date_line[32];
     char time_line[32];
     char temperature_line[32];
     char humidity_line[32];
+    char power_line[32];
     time_t current_time = time(NULL);
     struct tm current_tm;
 
@@ -180,25 +183,55 @@ void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_
     else snprintf(temperature_line, sizeof(temperature_line), "TEMP : --.- \xb0" "C");
     if (humidity_valid) snprintf(humidity_line, sizeof(humidity_line), "HUM : %04.1f %%RH", humidity);
     else snprintf(humidity_line, sizeof(humidity_line), "HUM : --.- %%RH");
+    // SRS3_001/003/004: power source + battery percentage/voltage.
+    // battery_voltage == 0 means no analog reading exists at all (e.g.
+    // BATTERY_SENSE_MODE_DIGITAL_STATUS) - show a plain OK/LOW status
+    // instead of a fabricated voltage/percentage in that case.
+    if (battery_voltage > 0.01f) {
+        snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%u%% %.1fV",
+                 power_source_name ? power_source_name : "--", battery_percentage, battery_voltage);
+    } else {
+        snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%s",
+                 power_source_name ? power_source_name : "--",
+                 battery_percentage >= BATTERY_LOW_PERCENT ? "OK" : "LOW");
+    }
+    (void)battery_reading_is_accurate; // reserved for future LCD annotation
 
     draw_text(12, 8, "COLD STORAGE", 0xffff);
     draw_text(12, 38, date_line, 0xffff);
     draw_text(12, 68, time_line, 0xffff);
     draw_text(12, 98, temperature_line, 0x07e0);
     draw_text(12, 128, humidity_line, 0x07ff);
-    draw_text(12, 158, "GSM: 4G WIFI: OK", 0xffff);
-    draw_text(12, 188, "STATUS: NORMAL", 0x07e0);
+    draw_text(12, 158, power_line, 0xffe0);
+    draw_text(12, 188, "GSM: 4G WIFI: OK", 0xffff);
+    draw_text(12, 218, "STATUS: NORMAL", 0x07e0);
 
-    printf("LCD:\nCOLD STORAGE\n%s\n%s\n%s\n%s\nGSM: 4G WIFI: OK\nSTATUS: NORMAL\n",
-           date_line, time_line, temperature_line, humidity_line);
+    printf("LCD:\nCOLD STORAGE\n%s\n%s\n%s\n%s\n%s\nGSM: 4G WIFI: OK\nSTATUS: NORMAL\n",
+           date_line, time_line, temperature_line, humidity_line, power_line);
     (void)sensor_type_name;
     (void)humidity_sensor_type_name;
 }
 
-void lcd_show_alarm(uint16_t alarm_id, const char *text) {
+void lcd_show_alarm(uint16_t alarm_id, const char *text,
+                     const char *power_source_name, float battery_voltage,
+                     uint8_t battery_percentage) {
     char line[32];
+    char power_line[32];
     clear_screen();
     snprintf(line, sizeof(line), "ALARM %u", alarm_id);
     draw_text(12, 60, line, 0xf800);
     draw_text(12, 115, text, 0xf800);
+
+    // SRS3_001/003/004: keep power source/battery status visible on the
+    // alarm screen too, so it never disappears while any alarm is active.
+    if (battery_voltage > 0.01f) {
+        snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%u%% %.1fV",
+                 power_source_name ? power_source_name : "--", battery_percentage, battery_voltage);
+    } else {
+        snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%s",
+                 power_source_name ? power_source_name : "--",
+                 battery_percentage >= BATTERY_LOW_PERCENT ? "OK" : "LOW");
+    }
+    draw_text(12, 170, power_line, 0xffe0);
+    printf("LCD:\n%s\n%s\n%s\n", line, text, power_line);
 }
