@@ -49,6 +49,7 @@
 #include "lcd_i2c.h"
 #include "sms_module.h"
 #include "power_source.h"
+#include "touch_input.h"
 
 static const char *TAG = "ColdWatch";
 
@@ -57,8 +58,50 @@ static bool  lastTempValid = false;
 static float lastHumidity = NAN;
 static bool  lastHumidityValid = false;
 
+// ---------------- Multi-screen touch UI (HOME / ALARMS / POWER / GSM) ----------------
+typedef enum {
+    SCREEN_HOME = 0,
+    SCREEN_ALARMS,
+    SCREEN_POWER,
+    SCREEN_GSM,
+    SCREEN_COUNT
+} screen_state_t;
+
+static screen_state_t s_current_screen = SCREEN_HOME;
+
+static const char *gsm_state_name(gsm_state_t state) {
+    switch (state) {
+        case GSM_STATE_REGISTERED:     return "REGISTERED";
+        case GSM_STATE_NOT_REGISTERED: return "SEARCHING";
+        case GSM_STATE_INIT_FAILED:    return "INIT FAILED";
+        default:                       return "UNKNOWN";
+    }
+}
+
 static inline int64_t millis64(void) {
     return esp_timer_get_time() / 1000;
+}
+
+// Reads the touch panel and cycles s_current_screen when the bottom nav bar
+// is tapped (see config.h NAV_BAR_Y_TOP/NAV_PREV_X_MAX/NAV_NEXT_X_MIN). Touch
+// is only consulted here - while any alarm is active, alarm_manager_refresh_
+// outputs() takes over the display entirely and this selection is simply
+// not drawn until the alarm clears (screen choice is preserved, not lost).
+static void handle_touch_navigation(void) {
+    uint16_t x, y;
+    if (!touch_input_get_point(&x, &y)) {
+        return; // no new tap this cycle
+    }
+    if (y < NAV_BAR_Y_TOP) {
+        return; // tap was inside the screen content, not the nav bar
+    }
+    if (x < NAV_PREV_X_MAX) {
+        s_current_screen = (screen_state_t)((s_current_screen + SCREEN_COUNT - 1) % SCREEN_COUNT);
+        ESP_LOGI(TAG, "[TOUCH] PREV -> screen %d", s_current_screen);
+    } else if (x >= NAV_NEXT_X_MIN) {
+        s_current_screen = (screen_state_t)((s_current_screen + 1) % SCREEN_COUNT);
+        ESP_LOGI(TAG, "[TOUCH] NEXT -> screen %d", s_current_screen);
+    }
 }
 
 // ---------------- Serial command console (Serial Monitor / stdin over UART0) ----------------
@@ -166,6 +209,7 @@ static void coldwatch_task(void *arg) {
     int64_t last_lcd_refresh_ms = 0;
     int64_t last_humidity_sample_ms = 0;
     int64_t last_power_sample_ms = 0;
+    int64_t last_gsm_poll_ms = 0;
 
     while (1) {
         int64_t now = millis64();
@@ -184,6 +228,12 @@ static void coldwatch_task(void *arg) {
                                           power_source_is_battery(),
                                           lastTemperature, lastTempValid,
                                           lastHumidity, lastHumidityValid);
+        }
+
+        // ---- Poll GSM module status for the GSM screen ----
+        if (now - last_gsm_poll_ms >= GSM_STATUS_POLL_INTERVAL_MS) {
+            last_gsm_poll_ms = now;
+            sms_module_poll_status();
         }
 
         // ---- Sample the humidity sensor at fixed interval (SRS2_001) ----
@@ -219,17 +269,56 @@ static void coldwatch_task(void *arg) {
         }
 
         handle_ack_button();
+        handle_touch_navigation(); // updates s_current_screen on a nav-bar tap
 
         // ---- Refresh LCD / buzzer pattern ----
         if (now - last_lcd_refresh_ms >= LCD_REFRESH_INTERVAL_MS) {
             last_lcd_refresh_ms = now;
-            // SRS1_009 / SRS2_009 / SRS3_001/003/004
-            alarm_manager_refresh_outputs(humidity_sensor_get_type_name(), lastTemperature, lastTempValid,
-                                           humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid,
-                                           power_source_get_state_name(),
-                                           power_source_get_battery_voltage(),
-                                           power_source_get_battery_percentage(),
-                                           power_source_battery_reading_is_accurate());
+
+            // SRS1_006/007/010, SRS2_006/007/010, SRS3_001/003/004/005/006:
+            // an active alarm always takes over the display, regardless of
+            // which of the 4 screens the user last selected via touch.
+            bool alarm_active = alarm_manager_refresh_outputs(
+                humidity_sensor_get_type_name(), lastTemperature, lastTempValid,
+                humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid,
+                power_source_get_state_name(),
+                power_source_get_battery_voltage(),
+                power_source_get_battery_percentage());
+
+            if (!alarm_active) {
+                // No alarm right now - render whichever screen touch last selected.
+                switch (s_current_screen) {
+                    case SCREEN_HOME: {
+                        uint8_t active_count = alarm_manager_get_active_count();
+                        lcd_show_home(humidity_sensor_get_type_name(), lastTemperature, lastTempValid,
+                                      humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid,
+                                      active_count);
+                        break;
+                    }
+                    case SCREEN_ALARMS: {
+                        uint16_t ids[ALARMS_SCREEN_MAX_VISIBLE];
+                        const char *names[ALARMS_SCREEN_MAX_VISIBLE];
+                        uint8_t active_count = alarm_manager_get_active_count();
+                        uint8_t listed = alarm_manager_get_active_list(ids, names, ALARMS_SCREEN_MAX_VISIBLE);
+                        lcd_show_alarms_screen(active_count, ids, names, listed);
+                        break;
+                    }
+                    case SCREEN_POWER:
+                        lcd_show_power_screen(power_source_get_state_name(),
+                                              power_source_get_battery_voltage(),
+                                              power_source_get_battery_percentage(),
+                                              alarm_manager_is_battery_low_active(),
+                                              alarm_manager_is_battery_critical_active());
+                        break;
+                    case SCREEN_GSM:
+                    default:
+                        lcd_show_gsm_screen(gsm_state_name(sms_module_get_state()),
+                                            sms_module_get_signal_quality(),
+                                            sms_module_get_has_sent_any(),
+                                            sms_module_get_last_send_ok());
+                        break;
+                }
+            }
         } else {
             buzzer_update(); // keep buzzer pattern responsive between LCD refreshes
         }
@@ -254,6 +343,7 @@ void app_main(void) {
     power_source_init();         // Main power-supply detection (GPIO34) + battery monitoring (GPIO35)
     buzzer_init();
     lcd_init();
+    touch_input_init();          // XPT2046 touch nav for the 4-screen UI (shares the LCD's SPI bus)
     sms_module_init();
     alarm_manager_init();
 
@@ -270,6 +360,7 @@ void app_main(void) {
 
     printf("Type GET / LOG / POWER / SNAP / RESET / SET HIGH x / SET LOW x / SET RES x / SET HYST x /\n"
            "     SET HUMHIGH x / SET HUMLOW x / SET HUMRES x / SET HUMHYST x\n");
+    printf("LCD: tap the bottom-left/right nav bar to switch HOME / ALARMS / POWER / GSM screens.\n");
 
     xTaskCreate(console_task, "console_task", 4096, NULL, 5, NULL);
     xTaskCreate(coldwatch_task, "coldwatch_task", 4096, NULL, 5, NULL);

@@ -57,12 +57,16 @@ void alarm_manager_update_battery(float voltage, uint8_t percent, bool on_batter
                                    float last_temperature, bool last_temp_valid,
                                    float last_humidity, bool last_humidity_valid);
 
-// Drives the LCD / buzzer according to current alarm priority.
-// Call periodically (independent of the sample rate).
-void alarm_manager_refresh_outputs(const char *sensor_type_name, float last_temperature, bool last_temp_valid,
+// Drives the LCD / buzzer according to current alarm priority. Call
+// periodically (independent of the sample rate). Returns true if an alarm
+// is active (the full-status alarm screen was drawn - caller should skip
+// drawing its own selected screen this cycle), false if no alarm is active
+// (nothing was drawn - caller should render whichever of the 4 navigable
+// screens is currently selected, e.g. via lcd_show_home()/_alarms_screen()/
+// _power_screen()/_gsm_screen()).
+bool alarm_manager_refresh_outputs(const char *sensor_type_name, float last_temperature, bool last_temp_valid,
                                     const char *humidity_sensor_type_name, float last_humidity, bool last_humidity_valid,
-                                    const char *power_source_name, float battery_voltage, uint8_t battery_percentage,
-                                    bool battery_reading_is_accurate);
+                                    const char *power_source_name, float battery_voltage, uint8_t battery_percentage);
 
 bool alarm_manager_is_high_active(void);
 bool alarm_manager_is_low_active(void);
@@ -75,6 +79,16 @@ bool alarm_manager_is_humidity_fault_active(void);
 bool alarm_manager_is_power_lost_active(void);
 bool alarm_manager_is_battery_low_active(void);
 bool alarm_manager_is_battery_critical_active(void);
+
+// ---- ALARMS screen support (multi-screen touch UI) ----
+// How many of the 10 possible alarms are currently RAISED.
+uint8_t alarm_manager_get_active_count(void);
+
+// Fills out_ids[]/out_names[] (both arrays must have room for at least
+// max_count entries) with the currently active alarms, most-severe-first
+// (same priority order as alarm_manager_refresh_outputs()). Returns how
+// many entries were actually filled (0..max_count).
+uint8_t alarm_manager_get_active_list(uint16_t *out_ids, const char **out_names, uint8_t max_count);
 
 #endif // COLDWATCH_ALARM_MANAGER_H
 

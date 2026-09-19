@@ -44,6 +44,17 @@ static const char *s_last_power_source_name = "--";
 static float       s_last_battery_voltage    = 0.0f;
 static uint8_t     s_last_battery_percentage = 0;
 
+// Last-known temperature/humidity readings + sensor names, cached for the
+// same reason: lcd_show_alarm() shows the FULL status screen (date, time,
+// temperature, humidity, power, battery) plus the alarm banner, so it never
+// hides the other readings while any alarm is active.
+static const char *s_sensor_type_name          = "--";
+static const char *s_humidity_sensor_type_name = "--";
+static float       s_last_temperature  = 0.0f;
+static bool        s_last_temp_valid   = false;
+static float       s_last_humidity     = 0.0f;
+static bool        s_last_humidity_valid = false;
+
 void alarm_manager_init(void) {
     // Nothing to do yet; kept for symmetry / future extension.
 }
@@ -58,7 +69,13 @@ static void notify(uint16_t alarm_id, uint8_t event_type, float temperature,
             event_type == LOG_EVENT_RAISED ? "RAISED" : "CLEARED",
             alarm_id, temperature);
 
-    (void)lcd_line;
+    // Display on LCD (SRS1_006/007/010): full status screen (date/time/
+    // temperature/humidity/power/battery, SRS3_001/003/004) plus the alarm
+    // banner, so nothing disappears while an alarm is active.
+    lcd_show_alarm(alarm_id, lcd_line,
+                    s_sensor_type_name, s_last_temperature, s_last_temp_valid,
+                    s_humidity_sensor_type_name, s_last_humidity, s_last_humidity_valid,
+                    s_last_power_source_name, s_last_battery_voltage, s_last_battery_percentage);
 
     // Send SMS (SRS1_006/007/010) - only on RAISE, not on clear, to limit SMS cost/spam.
     if (event_type == LOG_EVENT_RAISED) {
@@ -265,6 +282,11 @@ void alarm_manager_update(float temperature, bool temp_valid, bool sensor_fault)
     coldwatch_config_t *cfg = nvs_storage_get_config();
     uint16_t hyst = cfg->temperatureHysteresis; // SRS1_008: consecutive-sample debounce count
 
+    // Cache for lcd_show_alarm() so the full status screen (including this
+    // reading) stays visible even while some other alarm is active.
+    s_last_temperature = temperature;
+    s_last_temp_valid  = temp_valid && !sensor_fault;
+
     // --- Sensor fault (SRS1_010) - debounce already applied inside temperature_sensor ---
     if (sensor_fault) {
         s_high_raise_cnt = s_low_raise_cnt = 0; // temperature is not trustworthy while faulted
@@ -313,6 +335,11 @@ void alarm_manager_update_humidity(float humidity, bool humidity_valid, bool sen
     coldwatch_config_t *cfg = nvs_storage_get_config();
     uint16_t hyst = cfg->humidityHysteresis; // SRS2_008: consecutive-sample debounce count
 
+    // Cache for lcd_show_alarm() so the full status screen (including this
+    // reading) stays visible even while some other alarm is active.
+    s_last_humidity       = humidity;
+    s_last_humidity_valid = humidity_valid && !sensor_fault;
+
     // --- Sensor fault (SRS2_010) - debounce already applied inside humidity_sensor ---
     if (sensor_fault) {
         s_humidity_high_raise_cnt = s_humidity_low_raise_cnt = 0; // humidity is not trustworthy while faulted
@@ -356,16 +383,77 @@ void alarm_manager_update_humidity(float humidity, bool humidity_valid, bool sen
     }
 }
 
-void alarm_manager_refresh_outputs(const char *sensor_type_name, float last_temperature, bool last_temp_valid,
+// Priority: critical battery > power lost > low battery > temp sensor fault
+// > humidity sensor fault > high temp > low temp > high humidity > low
+// humidity. Draws the full-status alarm override screen (SRS1_006/007/010,
+// SRS2_006/007/010, SRS3_001/003/004/005/006) and returns true the moment
+// any alarm is active. Returns false (drawing nothing) when no alarm is
+// active - main.c is then responsible for rendering whichever of the 4
+// navigable screens (HOME/ALARMS/POWER/GSM) is currently selected, so an
+// alarm always takes priority over the touch-selected screen without this
+// module needing to know anything about screen navigation.
+bool alarm_manager_refresh_outputs(const char *sensor_type_name, float last_temperature, bool last_temp_valid,
                                     const char *humidity_sensor_type_name, float last_humidity, bool last_humidity_valid,
-                                    const char *power_source_name, float battery_voltage, uint8_t battery_percentage,
-                                    bool battery_reading_is_accurate) {
-    lcd_show_normal(sensor_type_name, last_temperature, last_temp_valid,
-                    humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                    power_source_name, battery_voltage, battery_percentage,
-                    battery_reading_is_accurate);
+                                    const char *power_source_name, float battery_voltage, uint8_t battery_percentage) {
+    // Cache sensor names too (readings are already cached by
+    // alarm_manager_update() / alarm_manager_update_humidity()) so notify()
+    // can show the full status screen even when triggered outside of this
+    // refresh cycle.
+    s_sensor_type_name          = sensor_type_name;
+    s_humidity_sensor_type_name = humidity_sensor_type_name;
+
+    bool alarm_active = true;
+    if (s_battery_critical_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_CRITICAL_BATTERY, "BATT CRITICAL!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_power_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_POWER_SOURCE, "ON BATTERY!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_battery_low_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_LOW_BATTERY, "LOW BATTERY!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_fault_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_SENSOR_FAULT, "SENSOR FAULT!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_humidity_fault_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_HUMIDITY_SENSOR_FAULT, "HUM SENSOR FAULT",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_high_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_HIGH_TEMP, "HIGH TEMP!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_low_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_LOW_TEMP, "LOW TEMP!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_humidity_high_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_HIGH_HUMIDITY, "HIGH HUMIDITY!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else if (s_humidity_low_state == ALARM_STATE_RAISED) {
+        lcd_show_alarm(ALARM_ID_LOW_HUMIDITY, "LOW HUMIDITY!",
+                        sensor_type_name, last_temperature, last_temp_valid,
+                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
+                        power_source_name, battery_voltage, battery_percentage);
+    } else {
+        alarm_active = false; // caller renders the currently-selected screen instead
+    }
 
     buzzer_update();
+    return alarm_active;
 }
 
 bool alarm_manager_is_high_active(void)  { return s_high_state  == ALARM_STATE_RAISED; }
@@ -380,4 +468,51 @@ bool alarm_manager_is_power_lost_active(void) { return s_power_state == ALARM_ST
 
 bool alarm_manager_is_battery_low_active(void)      { return s_battery_low_state      == ALARM_STATE_RAISED; }
 bool alarm_manager_is_battery_critical_active(void) { return s_battery_critical_state == ALARM_STATE_RAISED; }
+
+// ---- ALARMS screen support (multi-screen touch UI) ----
+// Single source of truth for "what's active right now", in the same
+// priority order used by alarm_manager_refresh_outputs(), so the ALARMS
+// screen and the alarm-override screen never disagree.
+typedef struct {
+    uint16_t    id;
+    const char *name;
+    bool        active;
+} alarm_entry_t;
+
+uint8_t alarm_manager_get_active_count(void) {
+    uint8_t count = 0;
+    if (s_battery_critical_state == ALARM_STATE_RAISED) count++;
+    if (s_power_state == ALARM_STATE_RAISED) count++;
+    if (s_battery_low_state == ALARM_STATE_RAISED) count++;
+    if (s_fault_state == ALARM_STATE_RAISED) count++;
+    if (s_humidity_fault_state == ALARM_STATE_RAISED) count++;
+    if (s_high_state == ALARM_STATE_RAISED) count++;
+    if (s_low_state == ALARM_STATE_RAISED) count++;
+    if (s_humidity_high_state == ALARM_STATE_RAISED) count++;
+    if (s_humidity_low_state == ALARM_STATE_RAISED) count++;
+    return count;
+}
+
+uint8_t alarm_manager_get_active_list(uint16_t *out_ids, const char **out_names, uint8_t max_count) {
+    const alarm_entry_t table[] = {
+        { ALARM_ID_CRITICAL_BATTERY,      "BATT CRITICAL",   s_battery_critical_state == ALARM_STATE_RAISED },
+        { ALARM_ID_POWER_SOURCE,          "ON BATTERY",      s_power_state == ALARM_STATE_RAISED },
+        { ALARM_ID_LOW_BATTERY,           "LOW BATTERY",     s_battery_low_state == ALARM_STATE_RAISED },
+        { ALARM_ID_SENSOR_FAULT,          "TEMP SENSOR FLT", s_fault_state == ALARM_STATE_RAISED },
+        { ALARM_ID_HUMIDITY_SENSOR_FAULT, "HUM SENSOR FLT",  s_humidity_fault_state == ALARM_STATE_RAISED },
+        { ALARM_ID_HIGH_TEMP,             "HIGH TEMP",       s_high_state == ALARM_STATE_RAISED },
+        { ALARM_ID_LOW_TEMP,              "LOW TEMP",        s_low_state == ALARM_STATE_RAISED },
+        { ALARM_ID_HIGH_HUMIDITY,         "HIGH HUMIDITY",   s_humidity_high_state == ALARM_STATE_RAISED },
+        { ALARM_ID_LOW_HUMIDITY,          "LOW HUMIDITY",    s_humidity_low_state == ALARM_STATE_RAISED },
+    };
+    uint8_t filled = 0;
+    for (uint8_t i = 0; i < sizeof(table) / sizeof(table[0]) && filled < max_count; i++) {
+        if (table[i].active) {
+            out_ids[filled]   = table[i].id;
+            out_names[filled] = table[i].name;
+            filled++;
+        }
+    }
+    return filled;
+}
 
