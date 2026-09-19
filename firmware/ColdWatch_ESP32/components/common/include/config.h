@@ -146,12 +146,35 @@
 #define LCD_WIDTH               240
 #define LCD_HEIGHT              320
 
+// ============================================================
+// XPT2046 resistive touch controller (shares the TFT's SPI bus - SCLK/
+// MOSI/MISO are reused; only CS and IRQ need dedicated GPIOs, already
+// wired). Used for on-screen navigation between the 4-screen LCD UI
+// (HOME / ALARMS / POWER / GSM) - see components/touch_input.
+// ============================================================
+#define TOUCH_SPI_CS_GPIO       GPIO_NUM_32
+#define TOUCH_IRQ_GPIO          GPIO_NUM_33   // set to -1 to force pure polling instead
+// Orientation flags - must match the LCD's esp_lcd_panel_swap_xy(true) call
+// in lcd_i2c.c. Verify on real hardware (tap each corner); flip these if
+// touch coordinates come back rotated/mirrored relative to what's drawn.
+#define TOUCH_SWAP_XY            1
+#define TOUCH_MIRROR_X           0
+#define TOUCH_MIRROR_Y           0
+// Bottom nav-bar touch zones (shared by every non-alarm screen), in LCD
+// panel coordinates (0..LCD_WIDTH-1 x, 0..LCD_HEIGHT-1 y).
+#define NAV_BAR_Y_TOP           296   // y >= this is the nav bar row
+#define NAV_PREV_X_MAX           80   // x <  this (within nav bar row) = PREV
+#define NAV_NEXT_X_MIN          160   // x >= this (within nav bar row) = NEXT
+#define TOUCH_DEBOUNCE_MS       250   // minimum time between accepted taps
+#define ALARMS_SCREEN_MAX_VISIBLE 4   // how many active alarms the ALARMS screen lists at once
+
 // UART for SIM800L / SIM900 GSM module
 #define GSM_UART_PORT         UART_NUM_2
 #define GSM_UART_TX_GPIO      GPIO_NUM_17
 #define GSM_UART_RX_GPIO      GPIO_NUM_16
 #define GSM_BAUD_RATE         9600
 #define SMS_SEND_TIMEOUT_MS   5000
+#define GSM_STATUS_POLL_INTERVAL_MS  30000  // how often to poll AT+CREG?/AT+CSQ for the GSM screen
 
 // ============================================================
 // SRS1_002 / SRS1_003 / SRS1_004 / SRS1_008: default configurable properties

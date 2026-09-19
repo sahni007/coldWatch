@@ -118,6 +118,14 @@ static void clear_screen(void) {
     }
 }
 
+// Bottom nav bar, shared by all 4 navigable screens (not drawn on the alarm
+// override screen - touch is ignored while an alarm is active, see main.c).
+// Touch zones match config.h NAV_BAR_Y_TOP/NAV_PREV_X_MAX/NAV_NEXT_X_MIN.
+static void draw_nav_bar(void) {
+    draw_text(4,   NAV_BAR_Y_TOP + 4, "< PREV", 0x07ff);
+    draw_text(160, NAV_BAR_Y_TOP + 4, "NEXT >", 0x07ff);
+}
+
 void lcd_init(void) {
     spi_bus_config_t bus_config = {
         .sclk_io_num = LCD_SPI_SCLK_GPIO,
@@ -161,10 +169,153 @@ void lcd_init(void) {
     draw_text(12, 20, "COLDWATCH", 0xffff);
 }
 
-void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_valid,
-                     const char *humidity_sensor_type_name, float humidity, bool humidity_valid,
-                     const char *power_source_name, float battery_voltage, uint8_t battery_percentage,
-                     bool battery_reading_is_accurate) {
+// ---- Screen 1/4: HOME ----
+void lcd_show_home(const char *sensor_type_name, float temperature, bool temp_valid,
+                    const char *humidity_sensor_type_name, float humidity, bool humidity_valid,
+                    uint8_t active_alarm_count) {
+    char date_line[32];
+    char time_line[32];
+    char temperature_line[32];
+    char humidity_line[32];
+    char status_line[32];
+    time_t current_time = time(NULL);
+    struct tm current_tm;
+
+    localtime_r(&current_time, &current_tm);
+    clear_screen();
+    snprintf(date_line, sizeof(date_line), "DATE : %02d/%02d/%02d",
+             current_tm.tm_mday, current_tm.tm_mon + 1, (current_tm.tm_year + 1900) % 100);
+    snprintf(time_line, sizeof(time_line), "TIME : %02d:%02d:%02d",
+             current_tm.tm_hour, current_tm.tm_min, current_tm.tm_sec);
+    if (temp_valid) snprintf(temperature_line, sizeof(temperature_line), "TEMP : %04.1f \xb0" "C", temperature);
+    else snprintf(temperature_line, sizeof(temperature_line), "TEMP : --.- \xb0" "C");
+    if (humidity_valid) snprintf(humidity_line, sizeof(humidity_line), "HUM : %04.1f %%RH", humidity);
+    else snprintf(humidity_line, sizeof(humidity_line), "HUM : --.- %%RH");
+
+    uint16_t status_color;
+    if (active_alarm_count == 0) {
+        snprintf(status_line, sizeof(status_line), "STATUS: NORMAL");
+        status_color = 0x07e0; // green
+    } else {
+        snprintf(status_line, sizeof(status_line), "STATUS: %u ALARM%s!",
+                 active_alarm_count, active_alarm_count == 1 ? "" : "S");
+        status_color = 0xf800; // red
+    }
+
+    draw_text(12, 8, "COLD STORAGE", 0xffff);
+    draw_text(12, 38, date_line, 0xffff);
+    draw_text(12, 68, time_line, 0xffff);
+    draw_text(12, 98, temperature_line, 0x07e0);
+    draw_text(12, 128, humidity_line, 0x07ff);
+    draw_text(12, 158, status_line, status_color);
+    draw_nav_bar();
+
+    printf("LCD[HOME]:\nCOLD STORAGE\n%s\n%s\n%s\n%s\n%s\n",
+           date_line, time_line, temperature_line, humidity_line, status_line);
+    (void)sensor_type_name;
+    (void)humidity_sensor_type_name;
+}
+
+// ---- Screen 2/4: ALARMS ----
+void lcd_show_alarms_screen(uint8_t active_count, const uint16_t *ids,
+                             const char *const *names, uint8_t list_count) {
+    char header_line[32];
+    char row_line[32];
+
+    clear_screen();
+    draw_text(12, 8, "COLD STORAGE", 0xffff);
+
+    if (active_count == 0) {
+        snprintf(header_line, sizeof(header_line), "ACTIVE ALARMS: NONE");
+        draw_text(12, 38, header_line, 0x07e0);
+    } else {
+        snprintf(header_line, sizeof(header_line), "ACTIVE ALARMS: %u", active_count);
+        draw_text(12, 38, header_line, 0xf800);
+    }
+
+    printf("LCD[ALARMS]:\n%s\n", header_line);
+    for (uint8_t i = 0; i < list_count && i < ALARMS_SCREEN_MAX_VISIBLE; i++) {
+        snprintf(row_line, sizeof(row_line), "%u %s", ids[i], names[i] ? names[i] : "");
+        draw_text(12, 68 + (i * 30), row_line, 0xf800);
+        printf("  %s\n", row_line);
+    }
+
+    draw_nav_bar();
+}
+
+// ---- Screen 3/4: POWER ----
+void lcd_show_power_screen(const char *power_source_name, float battery_voltage,
+                            uint8_t battery_percentage, bool battery_low_active,
+                            bool battery_critical_active) {
+    char source_line[32];
+    char batt_line[32];
+    char volt_line[32];
+    char status_line[32];
+    uint16_t status_color;
+
+    clear_screen();
+    snprintf(source_line, sizeof(source_line), "SOURCE : %s", power_source_name ? power_source_name : "--");
+    if (battery_voltage > 0.01f) {
+        snprintf(batt_line, sizeof(batt_line), "BATTERY: %u %%", battery_percentage);
+        snprintf(volt_line, sizeof(volt_line), "VOLTAGE: %.2f V", battery_voltage);
+    } else {
+        snprintf(batt_line, sizeof(batt_line), "BATTERY: %s", battery_percentage >= BATTERY_LOW_PERCENT ? "OK" : "LOW");
+        snprintf(volt_line, sizeof(volt_line), "VOLTAGE: N/A");
+    }
+
+    if (battery_critical_active) {
+        snprintf(status_line, sizeof(status_line), "STATUS : CRITICAL");
+        status_color = 0xf800; // red
+    } else if (battery_low_active) {
+        snprintf(status_line, sizeof(status_line), "STATUS : LOW");
+        status_color = 0xffe0; // yellow
+    } else {
+        snprintf(status_line, sizeof(status_line), "STATUS : OK");
+        status_color = 0x07e0; // green
+    }
+
+    draw_text(12, 8, "COLD STORAGE", 0xffff);
+    draw_text(12, 38, source_line, 0xffff);
+    draw_text(12, 68, batt_line, 0xffe0);
+    draw_text(12, 98, volt_line, 0xffe0);
+    draw_text(12, 128, status_line, status_color);
+    draw_nav_bar();
+
+    printf("LCD[POWER]:\n%s\n%s\n%s\n%s\n", source_line, batt_line, volt_line, status_line);
+}
+
+// ---- Screen 4/4: GSM ----
+void lcd_show_gsm_screen(const char *gsm_state_name, int8_t signal_quality,
+                          bool has_sent_sms, bool last_send_ok) {
+    char gsm_line[32];
+    char signal_line[32];
+    char sms_line[32];
+    uint16_t gsm_color;
+
+    clear_screen();
+    snprintf(gsm_line, sizeof(gsm_line), "GSM   : %s", gsm_state_name ? gsm_state_name : "UNKNOWN");
+    gsm_color = (gsm_state_name && strcmp(gsm_state_name, "REGISTERED") == 0) ? 0x07e0 : 0xffe0;
+
+    if (signal_quality >= 0) snprintf(signal_line, sizeof(signal_line), "SIGNAL: %d/31", signal_quality);
+    else snprintf(signal_line, sizeof(signal_line), "SIGNAL: --/31");
+
+    if (!has_sent_sms) snprintf(sms_line, sizeof(sms_line), "LAST SMS: --");
+    else snprintf(sms_line, sizeof(sms_line), "LAST SMS: %s", last_send_ok ? "SENT OK" : "FAILED");
+
+    draw_text(12, 8, "COLD STORAGE", 0xffff);
+    draw_text(12, 38, gsm_line, gsm_color);
+    draw_text(12, 68, signal_line, 0xffff);
+    draw_text(12, 98, sms_line, has_sent_sms && !last_send_ok ? 0xf800 : 0xffff);
+    draw_nav_bar();
+
+    printf("LCD[GSM]:\n%s\n%s\n%s\n", gsm_line, signal_line, sms_line);
+}
+
+// ---- Alarm override screen (shared full-status renderer) ----
+static void render_alarm_status_screen(const char *sensor_type_name, float temperature, bool temp_valid,
+                                        const char *humidity_sensor_type_name, float humidity, bool humidity_valid,
+                                        const char *power_source_name, float battery_voltage,
+                                        uint8_t battery_percentage, const char *status_line, uint16_t status_color) {
     char date_line[32];
     char time_line[32];
     char temperature_line[32];
@@ -183,10 +334,6 @@ void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_
     else snprintf(temperature_line, sizeof(temperature_line), "TEMP : --.- \xb0" "C");
     if (humidity_valid) snprintf(humidity_line, sizeof(humidity_line), "HUM : %04.1f %%RH", humidity);
     else snprintf(humidity_line, sizeof(humidity_line), "HUM : --.- %%RH");
-    // SRS3_001/003/004: power source + battery percentage/voltage.
-    // battery_voltage == 0 means no analog reading exists at all (e.g.
-    // BATTERY_SENSE_MODE_DIGITAL_STATUS) - show a plain OK/LOW status
-    // instead of a fabricated voltage/percentage in that case.
     if (battery_voltage > 0.01f) {
         snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%u%% %.1fV",
                  power_source_name ? power_source_name : "--", battery_percentage, battery_voltage);
@@ -195,7 +342,6 @@ void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_
                  power_source_name ? power_source_name : "--",
                  battery_percentage >= BATTERY_LOW_PERCENT ? "OK" : "LOW");
     }
-    (void)battery_reading_is_accurate; // reserved for future LCD annotation
 
     draw_text(12, 8, "COLD STORAGE", 0xffff);
     draw_text(12, 38, date_line, 0xffff);
@@ -203,35 +349,23 @@ void lcd_show_normal(const char *sensor_type_name, float temperature, bool temp_
     draw_text(12, 98, temperature_line, 0x07e0);
     draw_text(12, 128, humidity_line, 0x07ff);
     draw_text(12, 158, power_line, 0xffe0);
-    draw_text(12, 188, "GSM: 4G WIFI: OK", 0xffff);
-    draw_text(12, 218, "STATUS: NORMAL", 0x07e0);
+    draw_text(12, 218, status_line, status_color);
 
-    printf("LCD:\nCOLD STORAGE\n%s\n%s\n%s\n%s\n%s\nGSM: 4G WIFI: OK\nSTATUS: NORMAL\n",
+    printf("LCD[ALARM]:\nCOLD STORAGE\n%s\n%s\n%s\n%s\n%s\n",
            date_line, time_line, temperature_line, humidity_line, power_line);
     (void)sensor_type_name;
     (void)humidity_sensor_type_name;
 }
 
 void lcd_show_alarm(uint16_t alarm_id, const char *text,
+                     const char *sensor_type_name, float temperature, bool temp_valid,
+                     const char *humidity_sensor_type_name, float humidity, bool humidity_valid,
                      const char *power_source_name, float battery_voltage,
                      uint8_t battery_percentage) {
-    char line[32];
-    char power_line[32];
-    clear_screen();
-    snprintf(line, sizeof(line), "ALARM %u", alarm_id);
-    draw_text(12, 60, line, 0xf800);
-    draw_text(12, 115, text, 0xf800);
-
-    // SRS3_001/003/004: keep power source/battery status visible on the
-    // alarm screen too, so it never disappears while any alarm is active.
-    if (battery_voltage > 0.01f) {
-        snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%u%% %.1fV",
-                 power_source_name ? power_source_name : "--", battery_percentage, battery_voltage);
-    } else {
-        snprintf(power_line, sizeof(power_line), "PWR:%s BATT:%s",
-                 power_source_name ? power_source_name : "--",
-                 battery_percentage >= BATTERY_LOW_PERCENT ? "OK" : "LOW");
-    }
-    draw_text(12, 170, power_line, 0xffe0);
-    printf("LCD:\n%s\n%s\n%s\n", line, text, power_line);
+    char status_line[32];
+    snprintf(status_line, sizeof(status_line), "ALM%u:%s", alarm_id, text ? text : "");
+    render_alarm_status_screen(sensor_type_name, temperature, temp_valid,
+                                humidity_sensor_type_name, humidity, humidity_valid,
+                                power_source_name, battery_voltage, battery_percentage,
+                                status_line, 0xf800);
 }
