@@ -8,6 +8,7 @@
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_xpt2046.h"
 #include "esp_lcd_panel_io.h"
+#include "driver/gpio.h"
 #include "driver/spi_master.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -17,6 +18,7 @@ static const char *TAG = "TOUCH_INPUT";
 static esp_lcd_touch_handle_t s_touch = NULL;
 static bool    s_was_pressed = false;
 static int64_t s_last_tap_ms = 0;
+static int64_t s_last_diag_ms = 0;
 
 static inline int64_t millis64(void) {
     return esp_timer_get_time() / 1000;
@@ -24,6 +26,10 @@ static inline int64_t millis64(void) {
 
 void touch_input_init(void) {
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+    gpio_reset_pin(TOUCH_IRQ_GPIO);
+    gpio_set_direction(TOUCH_IRQ_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(TOUCH_IRQ_GPIO, GPIO_PULLUP_ONLY);
+
     esp_lcd_panel_io_spi_config_t tp_io_config =
         ESP_LCD_TOUCH_IO_SPI_XPT2046_CONFIG(TOUCH_SPI_CS_GPIO);
 
@@ -65,8 +71,12 @@ void touch_input_init(void) {
         return;
     }
 
+    gpio_set_direction(TOUCH_IRQ_GPIO, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(TOUCH_IRQ_GPIO, GPIO_PULLUP_ONLY);
+
     ESP_LOGI(TAG, "XPT2046 touch controller initialized (CS=GPIO%d, IRQ=GPIO%d)",
              TOUCH_SPI_CS_GPIO, TOUCH_IRQ_GPIO);
+    ESP_LOGI(TAG, "XPT2046 IRQ idle level: %d", gpio_get_level(TOUCH_IRQ_GPIO));
 }
 
 bool touch_input_get_point(uint16_t *x, uint16_t *y) {
@@ -84,6 +94,14 @@ bool touch_input_get_point(uint16_t *x, uint16_t *y) {
     uint8_t point_count = 0;
     esp_err_t err = esp_lcd_touch_get_data(s_touch, &point, &point_count, 1);
     bool pressed = (err == ESP_OK) && (point_count > 0);
+
+    int64_t now = millis64();
+    if (now - s_last_diag_ms >= 1000) {
+        s_last_diag_ms = now;
+        ESP_LOGI(TAG, "[TOUCH] poll: irq=%d read=%s data=%s points=%u",
+                 gpio_get_level(TOUCH_IRQ_GPIO), esp_err_to_name(rd_err),
+                 esp_err_to_name(err), (unsigned)point_count);
+    }
 
     // Only report the rising edge (press just started), same debounce
     // philosophy as main.c's handle_ack_button(), so a single physical tap
@@ -106,7 +124,6 @@ bool touch_input_get_point(uint16_t *x, uint16_t *y) {
     ESP_LOGI(TAG, "[TOUCH] raw tap detected: x=%u y=%u (strength=%u)",
              point.x, point.y, point.strength);
 
-    int64_t now = millis64();
     if (now - s_last_tap_ms < TOUCH_DEBOUNCE_MS) {
         ESP_LOGI(TAG, "[TOUCH] tap ignored - inside debounce window (%lldms since last tap, "
                        "TOUCH_DEBOUNCE_MS=%d)", (long long)(now - s_last_tap_ms), TOUCH_DEBOUNCE_MS);

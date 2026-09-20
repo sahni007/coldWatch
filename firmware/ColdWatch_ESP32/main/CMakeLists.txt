@@ -12,7 +12,9 @@ idf_component_register(
     lcd_i2c
     sms_module
     touch_input
-    driver
+    esp_driver_gpio
+    esp_driver_uart
+    esp_system
     esp_timer
     log
     freertos

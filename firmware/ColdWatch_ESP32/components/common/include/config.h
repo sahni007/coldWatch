@@ -153,7 +153,7 @@
 // (HOME / ALARMS / POWER / GSM) - see components/touch_input.
 // ============================================================
 #define TOUCH_SPI_CS_GPIO       GPIO_NUM_32
-#define TOUCH_IRQ_GPIO          GPIO_NUM_33   // set to -1 to force pure polling instead
+#define TOUCH_IRQ_GPIO          GPIO_NUM_26   // XPT2046 T_IRQ
 // Orientation flags - must match the LCD's esp_lcd_panel_swap_xy(true) call
 // in lcd_i2c.c. Verify on real hardware (tap each corner); flip these if
 // touch coordinates come back rotated/mirrored relative to what's drawn.

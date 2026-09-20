@@ -37,6 +37,7 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "driver/gpio.h"
 #include "driver/uart.h"
 
@@ -92,7 +93,9 @@ static void handle_touch_navigation(void) {
     if (!touch_input_get_point(&x, &y)) {
         return; // no new tap this cycle
     }
+    ESP_LOGI(TAG, "[TOUCH] tap x=%u y=%u", (unsigned)x, (unsigned)y);
     if (y < NAV_BAR_Y_TOP) {
+        ESP_LOGI(TAG, "[TOUCH] ignored: above navigation bar");
         return; // tap was inside the screen content, not the nav bar
     }
     if (x < NAV_PREV_X_MAX) {
@@ -101,6 +104,8 @@ static void handle_touch_navigation(void) {
     } else if (x >= NAV_NEXT_X_MIN) {
         s_current_screen = (screen_state_t)((s_current_screen + 1) % SCREEN_COUNT);
         ESP_LOGI(TAG, "[TOUCH] NEXT -> screen %d", s_current_screen);
+    } else {
+        ESP_LOGI(TAG, "[TOUCH] ignored: center of navigation bar");
     }
 }
 
@@ -206,10 +211,14 @@ static void handle_ack_button(void) {
 
 // ---------------- Main application task ----------------
 static void coldwatch_task(void *arg) {
+    esp_task_wdt_user_handle_t wdt_user = NULL;
     int64_t last_lcd_refresh_ms = 0;
     int64_t last_humidity_sample_ms = 0;
     int64_t last_power_sample_ms = 0;
     int64_t last_gsm_poll_ms = 0;
+
+    ESP_ERROR_CHECK(esp_task_wdt_add_user("coldwatch_task", &wdt_user));
+    ESP_LOGI(TAG, "Application watchdog enabled for coldwatch_task");
 
     while (1) {
         int64_t now = millis64();
@@ -323,6 +332,7 @@ static void coldwatch_task(void *arg) {
             buzzer_update(); // keep buzzer pattern responsive between LCD refreshes
         }
 
+        ESP_ERROR_CHECK(esp_task_wdt_reset_user(wdt_user));
         vTaskDelay(pdMS_TO_TICKS(BUZZER_UPDATE_INTERVAL_MS));
     }
 }

@@ -1,6 +1,6 @@
 idf_component_register(
   SRCS "onewire.c"
   INCLUDE_DIRS "include"
-  REQUIRES driver esp_rom
+  REQUIRES esp_driver_gpio esp_rom
 )
 
