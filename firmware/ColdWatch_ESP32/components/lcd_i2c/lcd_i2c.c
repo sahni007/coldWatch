@@ -118,12 +118,34 @@ static void clear_screen(void) {
     }
 }
 
+// Clears only the screen CONTENT area (above the nav bar row), leaving the
+// nav bar pixels completely untouched. The 4 navigable screens redraw their
+// content every LCD_REFRESH_INTERVAL_MS (500ms, e.g. to update the clock) -
+// blanking+redrawing the WHOLE panel (including the nav bar) every cycle is
+// what made "< PREV" / "NEXT >" visibly flicker/blink. Since the nav bar
+// text never changes, it only needs to be drawn once (see s_nav_bar_drawn
+// below) and otherwise left alone.
+static void clear_content_area(void) {
+    static uint16_t row[LCD_WIDTH * 20];
+    memset(row, 0, sizeof(row));
+    for (uint16_t y = 0; y < NAV_BAR_Y_TOP; y += 20) {
+        uint16_t height = (NAV_BAR_Y_TOP - y < 20) ? NAV_BAR_Y_TOP - y : 20;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_panel, 0, y, LCD_WIDTH, y + height, row));
+    }
+}
+
 // Bottom nav bar, shared by all 4 navigable screens (not drawn on the alarm
 // override screen - touch is ignored while an alarm is active, see main.c).
 // Touch zones match config.h NAV_BAR_Y_TOP/NAV_PREV_X_MAX/NAV_NEXT_X_MIN.
+static bool s_nav_bar_drawn = false;
 static void draw_nav_bar(void) {
+    if (s_nav_bar_drawn) {
+        return; // static text, already on-screen - redrawing it every
+                // refresh cycle is what caused the PREV/NEXT blink.
+    }
     draw_text(4,   NAV_BAR_Y_TOP + 4, "< PREV", 0x07ff);
     draw_text(160, NAV_BAR_Y_TOP + 4, "NEXT >", 0x07ff);
+    s_nav_bar_drawn = true;
 }
 
 void lcd_init(void) {
@@ -182,7 +204,7 @@ void lcd_show_home(const char *sensor_type_name, float temperature, bool temp_va
     struct tm current_tm;
 
     localtime_r(&current_time, &current_tm);
-    clear_screen();
+    clear_content_area(); // leaves the nav bar untouched (see comment above)
     snprintf(date_line, sizeof(date_line), "DATE : %02d/%02d/%02d",
              current_tm.tm_mday, current_tm.tm_mon + 1, (current_tm.tm_year + 1900) % 100);
     snprintf(time_line, sizeof(time_line), "TIME : %02d:%02d:%02d",
@@ -222,7 +244,7 @@ void lcd_show_alarms_screen(uint8_t active_count, const uint16_t *ids,
     char header_line[32];
     char row_line[32];
 
-    clear_screen();
+    clear_content_area(); // leaves the nav bar untouched (see comment above)
     draw_text(12, 8, "COLD STORAGE", 0xffff);
 
     if (active_count == 0) {
@@ -253,7 +275,7 @@ void lcd_show_power_screen(const char *power_source_name, float battery_voltage,
     char status_line[32];
     uint16_t status_color;
 
-    clear_screen();
+    clear_content_area(); // leaves the nav bar untouched (see comment above)
     snprintf(source_line, sizeof(source_line), "SOURCE : %s", power_source_name ? power_source_name : "--");
     if (battery_voltage > 0.01f) {
         snprintf(batt_line, sizeof(batt_line), "BATTERY: %u %%", battery_percentage);
@@ -292,7 +314,7 @@ void lcd_show_gsm_screen(const char *gsm_state_name, int8_t signal_quality,
     char sms_line[32];
     uint16_t gsm_color;
 
-    clear_screen();
+    clear_content_area(); // leaves the nav bar untouched (see comment above)
     snprintf(gsm_line, sizeof(gsm_line), "GSM   : %s", gsm_state_name ? gsm_state_name : "UNKNOWN");
     gsm_color = (gsm_state_name && strcmp(gsm_state_name, "REGISTERED") == 0) ? 0x07e0 : 0xffe0;
 
