@@ -284,18 +284,23 @@ static void coldwatch_task(void *arg) {
         if (now - last_lcd_refresh_ms >= LCD_REFRESH_INTERVAL_MS) {
             last_lcd_refresh_ms = now;
 
-            // SRS1_006/007/010, SRS2_006/007/010, SRS3_001/003/004/005/006:
-            // an active alarm always takes over the display, regardless of
-            // which of the 4 screens the user last selected via touch.
-            bool alarm_active = alarm_manager_refresh_outputs(
+            // NOTE: alarm_manager_refresh_outputs() still drives the buzzer/
+            // SMS/NVS logging exactly as before (SRS1_006/007/010,
+            // SRS2_006/007/010, SRS3_001/003/004/005/006) - it just no
+            // longer draws its own LCD screen. Alarm DETAILS are only ever
+            // shown on the dedicated ALARMS screen (lcd_show_alarms_screen);
+            // HOME/POWER/GSM always render their own normal content,
+            // whatever the current alarm state is.
+            (void)alarm_manager_refresh_outputs(
                 humidity_sensor_get_type_name(), lastTemperature, lastTempValid,
                 humidity_sensor_get_type_name(), lastHumidity, lastHumidityValid,
                 power_source_get_state_name(),
                 power_source_get_battery_voltage(),
                 power_source_get_battery_percentage());
 
-            if (!alarm_active) {
-                // No alarm right now - render whichever screen touch last selected.
+            {
+                // Always render whichever screen touch last selected - an
+                // active alarm no longer forces a different screen.
                 switch (s_current_screen) {
                     case SCREEN_HOME: {
                         uint8_t active_count = alarm_manager_get_active_count();

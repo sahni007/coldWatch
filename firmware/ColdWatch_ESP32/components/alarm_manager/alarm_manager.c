@@ -385,72 +385,37 @@ void alarm_manager_update_humidity(float humidity, bool humidity_valid, bool sen
 
 // Priority: critical battery > power lost > low battery > temp sensor fault
 // > humidity sensor fault > high temp > low temp > high humidity > low
-// humidity. Draws the full-status alarm override screen (SRS1_006/007/010,
-// SRS2_006/007/010, SRS3_001/003/004/005/006) and returns true the moment
-// any alarm is active. Returns false (drawing nothing) when no alarm is
-// active - main.c is then responsible for rendering whichever of the 4
-// navigable screens (HOME/ALARMS/POWER/GSM) is currently selected, so an
-// alarm always takes priority over the touch-selected screen without this
-// module needing to know anything about screen navigation.
+// humidity. Drives the buzzer according to whichever alarm is highest
+// priority (SRS1_006/007/010, SRS2_006/007/010, SRS3_001/003/004/005/006)
+// and returns true if any alarm is currently active. Does NOT draw
+// anything on the LCD itself - alarm details are shown ONLY on the
+// dedicated ALARMS screen (lcd_show_alarms_screen(), see main.c), so an
+// active alarm never overrides whichever of the 4 screens
+// (HOME/ALARMS/POWER/GSM) the user currently has selected via touch.
 bool alarm_manager_refresh_outputs(const char *sensor_type_name, float last_temperature, bool last_temp_valid,
                                     const char *humidity_sensor_type_name, float last_humidity, bool last_humidity_valid,
                                     const char *power_source_name, float battery_voltage, uint8_t battery_percentage) {
-    // Cache sensor names too (readings are already cached by
-    // alarm_manager_update() / alarm_manager_update_humidity()) so notify()
-    // can show the full status screen even when triggered outside of this
-    // refresh cycle.
+    // Cache sensor names/readings too, in case some other module wants them
+    // later (readings are already cached by alarm_manager_update()/
+    // alarm_manager_update_humidity()).
     s_sensor_type_name          = sensor_type_name;
     s_humidity_sensor_type_name = humidity_sensor_type_name;
+    s_last_power_source_name    = power_source_name;
+    s_last_battery_voltage      = battery_voltage;
+    s_last_battery_percentage   = battery_percentage;
+    (void)last_temperature; (void)last_temp_valid;
+    (void)last_humidity; (void)last_humidity_valid;
 
-    bool alarm_active = true;
-    if (s_battery_critical_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_CRITICAL_BATTERY, "BATT CRITICAL!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_power_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_POWER_SOURCE, "ON BATTERY!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_battery_low_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_LOW_BATTERY, "LOW BATTERY!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_fault_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_SENSOR_FAULT, "SENSOR FAULT!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_humidity_fault_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_HUMIDITY_SENSOR_FAULT, "HUM SENSOR FAULT",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_high_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_HIGH_TEMP, "HIGH TEMP!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_low_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_LOW_TEMP, "LOW TEMP!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_humidity_high_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_HIGH_HUMIDITY, "HIGH HUMIDITY!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else if (s_humidity_low_state == ALARM_STATE_RAISED) {
-        lcd_show_alarm(ALARM_ID_LOW_HUMIDITY, "LOW HUMIDITY!",
-                        sensor_type_name, last_temperature, last_temp_valid,
-                        humidity_sensor_type_name, last_humidity, last_humidity_valid,
-                        power_source_name, battery_voltage, battery_percentage);
-    } else {
-        alarm_active = false; // caller renders the currently-selected screen instead
-    }
+    bool alarm_active =
+        (s_battery_critical_state == ALARM_STATE_RAISED) ||
+        (s_power_state == ALARM_STATE_RAISED) ||
+        (s_battery_low_state == ALARM_STATE_RAISED) ||
+        (s_fault_state == ALARM_STATE_RAISED) ||
+        (s_humidity_fault_state == ALARM_STATE_RAISED) ||
+        (s_high_state == ALARM_STATE_RAISED) ||
+        (s_low_state == ALARM_STATE_RAISED) ||
+        (s_humidity_high_state == ALARM_STATE_RAISED) ||
+        (s_humidity_low_state == ALARM_STATE_RAISED);
 
     buzzer_update();
     return alarm_active;
