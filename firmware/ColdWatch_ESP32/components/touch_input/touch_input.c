@@ -5,6 +5,7 @@
  */
 #include "touch_input.h"
 #include "config.h"
+#include "sdkconfig.h"
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_xpt2046.h"
 #include "esp_lcd_panel_io.h"
@@ -16,9 +17,43 @@
 
 static const char *TAG = "TOUCH_INPUT";
 static esp_lcd_touch_handle_t s_touch = NULL;
+static esp_lcd_panel_io_handle_t s_tp_io = NULL; // kept for the raw-Z diagnostic read below
 static bool    s_was_pressed = false;
 static int64_t s_last_tap_ms = 0;
 static int64_t s_last_diag_ms = 0;
+
+// ---- Raw XPT2046 Z-pressure diagnostic (bypasses the esp_lcd_touch driver's
+// own touch-detection threshold entirely) ----
+// Mirrors the exact register/command bytes the atanisoft esp_lcd_touch_xpt2046
+// driver itself uses internally (see esp_lcd_touch_xpt2046.c xpt2046_read_data()),
+// so we can see the RAW pressure reading every poll - even when it's below
+// CONFIG_XPT2046_Z_THRESHOLD and the driver reports "points=0". This is the
+// only way to tell a genuine SPI/wiring problem (raw Z never changes, no
+// matter how hard you press) apart from a sensitivity problem (raw Z rises
+// when pressed, just not enough to cross the threshold).
+#define XPT2046_DIAG_ADC_LIMIT 4096
+#ifdef CONFIG_XPT2046_INTERRUPT_MODE
+    #define XPT2046_DIAG_PD0_BIT (0x00)
+#else
+    #define XPT2046_DIAG_PD0_BIT (0x01)
+#endif
+#ifdef CONFIG_XPT2046_VREF_ON_MODE
+    #define XPT2046_DIAG_PD1_BIT (0x02)
+#else
+    #define XPT2046_DIAG_PD1_BIT (0x00)
+#endif
+#define XPT2046_DIAG_PD_BITS (XPT2046_DIAG_PD1_BIT | XPT2046_DIAG_PD0_BIT)
+#define XPT2046_DIAG_REG_Z1  (0xB0 | XPT2046_DIAG_PD_BITS)
+#define XPT2046_DIAG_REG_Z2  (0xC0 | XPT2046_DIAG_PD_BITS)
+
+static esp_err_t read_xpt2046_raw_register(uint8_t reg, uint16_t *out_value) {
+    uint8_t buf[2] = {0, 0};
+    esp_err_t err = esp_lcd_panel_io_rx_param(s_tp_io, reg, buf, 2);
+    if (err == ESP_OK) {
+        *out_value = (((uint16_t)buf[0]) << 8) | buf[1];
+    }
+    return err;
+}
 
 static inline int64_t millis64(void) {
     return esp_timer_get_time() / 1000;
@@ -40,6 +75,7 @@ void touch_input_init(void) {
                  esp_err_to_name(err));
         return;
     }
+    s_tp_io = tp_io_handle; // saved for the raw-Z diagnostic in touch_input_get_point()
 
     // IMPORTANT: the XPT2046 driver scales raw ADC readings to 0..x_max /
     // 0..y_max BEFORE swap_xy is applied; the esp_lcd_touch core then
@@ -98,9 +134,25 @@ bool touch_input_get_point(uint16_t *x, uint16_t *y) {
     int64_t now = millis64();
     if (now - s_last_diag_ms >= 1000) {
         s_last_diag_ms = now;
-        ESP_LOGI(TAG, "[TOUCH] poll: irq=%d read=%s data=%s points=%u",
+
+        // Raw Z-pressure read, bypassing the driver's own touch-detection
+        // threshold entirely - lets us tell a genuine SPI/wiring problem
+        // (raw Z never changes no matter how hard you press) apart from a
+        // sensitivity problem (raw Z rises but stays under
+        // CONFIG_XPT2046_Z_THRESHOLD).
+        uint16_t z1_raw = 0, z2_raw = 0;
+        esp_err_t z1_err = read_xpt2046_raw_register(XPT2046_DIAG_REG_Z1, &z1_raw);
+        esp_err_t z2_err = read_xpt2046_raw_register(XPT2046_DIAG_REG_Z2, &z2_raw);
+        uint16_t z1 = z1_raw >> 3;
+        uint16_t z2 = z2_raw >> 3;
+        int32_t raw_z = (int32_t)z1 + (XPT2046_DIAG_ADC_LIMIT - (int32_t)z2);
+
+        ESP_LOGI(TAG, "[TOUCH] poll: irq=%d read=%s data=%s points=%u | rawZ=%ld "
+                       "(z1=%u z2=%u z1_err=%s z2_err=%s) threshold=%d",
                  gpio_get_level(TOUCH_IRQ_GPIO), esp_err_to_name(rd_err),
-                 esp_err_to_name(err), (unsigned)point_count);
+                 esp_err_to_name(err), (unsigned)point_count,
+                 (long)raw_z, z1, z2, esp_err_to_name(z1_err), esp_err_to_name(z2_err),
+                 CONFIG_XPT2046_Z_THRESHOLD);
     }
 
     // Only report the rising edge (press just started), same debounce

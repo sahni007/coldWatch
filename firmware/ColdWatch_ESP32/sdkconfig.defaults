@@ -3,3 +3,11 @@
 CONFIG_ESP_WIFI_ENABLED=n
 CONFIG_BT_ENABLED=n
 
+# XPT2046 touch controller: lower the minimum touch-pressure threshold from
+# the driver default (400) to make light/weak taps register as a touch.
+# If you still see "points=0" in the [TOUCH] poll log while firmly pressing
+# the screen, this is NOT a sensitivity problem - it means the SPI link to
+# the touch chip itself isn't getting valid data (wiring issue), and
+# lowering this further won't help. Raise this back up if taps become too
+# sensitive / register from stray noise.
+CONFIG_XPT2046_Z_THRESHOLD=150
