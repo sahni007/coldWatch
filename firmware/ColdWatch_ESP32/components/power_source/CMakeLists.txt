@@ -1,7 +1,8 @@
 idf_component_register(
   SRCS "power_source.c"
   INCLUDE_DIRS "include"
-  REQUIRES common esp_adc esp_timer esp_driver_gpio
+  REQUIRES common esp_adc esp_timer driver
 )
+
 
 
